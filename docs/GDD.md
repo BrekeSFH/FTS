@@ -49,11 +49,26 @@ La versión anterior de este documento planteaba un sistema híbrido con "burbuj
 | Single Player (leveo) | 1 | Tiempo real | Común |
 | Vault Multijugador | Varias parties declaradas | Turnos desde el inicio | Alto valor |
 
-### 5.1 Modelo de turnos en Vaults — DECISIÓN PENDIENTE
-Un sistema de turnos clásico (una party actúa, las demás esperan) genera mucho tiempo muerto cuando hay varias parties en el mapa. Opciones en evaluación:
+### 5.1 Modelo de turnos en Vaults — DECIDIDO
+Un sistema de turnos clásico (una party actúa, las demás esperan) genera mucho tiempo muerto cuando hay varias parties en el mapa. Se evaluaron dos opciones:
 
 * **Opción A — Turnos simultáneos (estilo WeGo):** todas las parties planifican sus acciones al mismo tiempo dentro de un límite, y el servidor resuelve todo junto. Fluido y justo, pero se aleja de la sensación del Fallout Tactics original.
 * **Opción B — Paralelo fuera de contacto, secuencial en contacto:** mientras las parties no tienen línea de visión entre sí, cada una juega sus turnos en paralelo contra la IA. Cuando dos o más parties se detectan, pasan a compartir un orden de Iniciativa. Más fiel al espíritu del juego original y preserva la tensión de la emboscada.
+
+**Se adopta la Opción B, con una barrera de ronda global.**
+
+El agregado de la barrera resuelve el único problema serio que tenía la opción: si cada party avanza a su ritmo, dos que se encuentran pueden estar en turnos distintos, y no hay forma obvia de decidir a quién le toca. Con la barrera, ninguna party empieza la ronda N+1 hasta que todas cerraron la N. Eso acota la deriva a una sola ronda y vuelve trivial el momento del encuentro. El costo es que una party rápida espera a la más lenta, pero el temporizador por turno del punto 5.2 le pone un techo a esa espera.
+
+Dentro de una ronda: las parties sin contacto resuelven en paralelo, y las que están en contacto resuelven por orden de Iniciativa.
+
+Las dos razones para preferirla sobre la A:
+
+* **Sensación.** Donde el feel de Fallout Tactics importa es en el tiroteo, y ahí la B da Iniciativa secuencial. Fuera de contacto, que es la mayor parte del run, el paralelismo no le cuesta nada a nadie porque las parties no se ven.
+* **Implementación.** La A parece más simple pero su resolución simultánea tiene casos sin respuesta obvia: dos unidades que se mueven a la misma casilla, dos que se matan mutuamente, cómo funciona el fuego de supresión cuando todo pasa a la vez. Y son difíciles de hacer legibles: el jugador tiene que entender qué pasó, lo que obliga a un replay de la resolución.
+
+Esta decisión depende de la lista cerrada de participantes (punto 3): como el servidor conoce todas las parties antes de abrir la instancia, puede imponerles un reloj de ronda común desde el arranque. Si las parties pudieran entrar en cualquier momento, reconciliar sus turnos sería bastante más complicado.
+
+**Qué se puede construir sin más decisiones:** el reloj de ronda y el temporizador son comunes a las dos opciones, así que esa parte del modelo de estado del servidor no quedaba bloqueada por esta elección.
 
 ### 5.2 Reglas necesarias independientemente de la opción elegida
 * **Temporizador por turno:** límite de tiempo para actuar; al agotarse, el turno termina.
