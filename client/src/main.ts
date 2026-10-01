@@ -1,7 +1,8 @@
 import { BosArchive, UnsupportedArchiveError, type BosEntry } from './bos/archive';
 import { pickBosFile, supportsFileSystemAccess } from './bos/filePicker';
 import { toHex } from './bos/signature';
-import { describeZar, drawZarToCanvas } from './sprites/canvas';
+import { describeTile, describeZar, drawTileToCanvas, drawZarToCanvas } from './sprites/canvas';
+import { isTile } from './sprites/tile';
 import { isZar } from './sprites/zar';
 
 /** Límite de filas renderizadas; los .BOS pueden tener miles de entradas. */
@@ -180,12 +181,13 @@ function hexDump(bytes: Uint8Array): string {
 }
 
 /**
- * Dibuja un ZAR en el canvas. Devuelve la descripción para el título, o null
- * si el archivo no es un ZAR y hay que caer a la vista de texto o hexadecimal.
+ * Dibuja la entrada en el canvas si es una imagen conocida. Devuelve la
+ * descripción para el título, o null si hay que caer al texto o al hexadecimal.
  */
-function drawZar(bytes: Uint8Array): string | null {
-  if (!isZar(bytes)) return null;
-  return describeZar(drawZarToCanvas(ui.previewCanvas, bytes));
+function drawImage(bytes: Uint8Array): string | null {
+  if (isZar(bytes)) return describeZar(drawZarToCanvas(ui.previewCanvas, bytes));
+  if (isTile(bytes)) return describeTile(drawTileToCanvas(ui.previewCanvas, bytes));
+  return null;
 }
 
 async function previewEntry(entry: BosEntry): Promise<void> {
@@ -196,10 +198,10 @@ async function previewEntry(entry: BosEntry): Promise<void> {
 
     let described: string | null = null;
     try {
-      described = drawZar(bytes);
+      described = drawImage(bytes);
     } catch (err) {
-      // Un ZAR corrupto no debe romper la vista previa: se cae al hexadecimal.
-      console.warn(`No se pudo decodificar ${entry.path} como ZAR`, err);
+      // Un archivo corrupto no debe romper la vista previa: se cae al hexadecimal.
+      console.warn(`No se pudo decodificar ${entry.path} como imagen`, err);
     }
 
     ui.previewImage.hidden = described === null;
