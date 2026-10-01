@@ -11,7 +11,8 @@
       <h1>Explorador BOS</h1>
       <p class="hint">
         Elegí un archivo <code>.BOS</code> de tu instalación de Fallout Tactics. Se procesa
-        localmente en tu navegador; nada se sube a ningún servidor.
+        localmente en tu navegador; nada se sube a ningún servidor. Podés tener varios
+        abiertos a la vez: los tiles y los personajes viven en archivos distintos.
       </p>
       <div class="actions">
         <button id="pick" type="button">Abrir archivo .BOS…</button>
@@ -21,6 +22,8 @@
 
     <main>
       <p id="status" role="status"></p>
+
+      <div id="archives" hidden></div>
 
       <section id="archive" hidden>
         <dl id="summary"></dl>

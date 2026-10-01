@@ -52,8 +52,15 @@ export async function loadTile(key: string, bytes: Uint8Array): Promise<LoadedTi
   return loaded;
 }
 
-/** Suelta los bitmaps cacheados. Se usa al cerrar un `.BOS`. */
-export function clearTileCache(): void {
-  for (const tile of cache.values()) tile.bitmap.close();
-  cache.clear();
+/**
+ * Suelta los bitmaps cacheados. Con `prefix` solo suelta los de ese origen,
+ * que es lo que hace falta al cerrar uno de los `.BOS` abiertos sin tocar los
+ * demás.
+ */
+export function clearTileCache(prefix?: string): void {
+  for (const [key, tile] of cache) {
+    if (prefix !== undefined && !key.startsWith(prefix)) continue;
+    tile.bitmap.close();
+    cache.delete(key);
+  }
 }

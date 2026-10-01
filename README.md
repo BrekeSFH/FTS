@@ -37,6 +37,8 @@ sin esa variable el test de integración se saltea:
 FT_CORE="C:/Program Files (x86)/Steam/steamapps/common/Fallout Tactics/core" npm test
 ```
 
+Podés tener varios `.BOS` abiertos a la vez y cambiar entre ellos con la barra de arriba: los tiles viven en `tiles_0.bos` y los personajes en `spr-character_0.bos`, así que un lobby con piso, pared y personaje necesita los dos. Cerrar uno suelta solo lo suyo.
+
 Abrí un `.BOS` de tu instalación. El cliente verifica la firma ZIP (`PK\x03\x04`, o el EOCD si el ZIP tiene datos antepuestos), lista las entradas leyendo solo el directorio central y descomprime cada entrada bajo demanda (vista previa o descarga). Si el archivo no es ZIP, muestra los primeros bytes en hexadecimal para diagnosticar el formato.
 
 Código relevante:

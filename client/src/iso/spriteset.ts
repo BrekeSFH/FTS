@@ -166,11 +166,20 @@ export function pickDirectionalAnimation(bytes: Uint8Array): number {
   return cualquiera >= 0 ? cualquiera : 0;
 }
 
-export function clearSpriteCache(): void {
-  for (const sprite of cache.values()) sprite.bitmap.close();
-  cache.clear();
-  for (const animation of animationCache.values()) {
-    for (const direccion of animation.images) for (const img of direccion) img.bitmap.close();
+/**
+ * Suelta los bitmaps cacheados. Con `prefix` solo suelta los de ese origen,
+ * para poder cerrar uno de los `.BOS` abiertos sin tocar los demás.
+ */
+export function clearSpriteCache(prefix?: string): void {
+  const alcanza = (key: string) => prefix === undefined || key.startsWith(prefix);
+  for (const [key, sprite] of cache) {
+    if (!alcanza(key)) continue;
+    sprite.bitmap.close();
+    cache.delete(key);
   }
-  animationCache.clear();
+  for (const [key, animation] of animationCache) {
+    if (!alcanza(key)) continue;
+    for (const direccion of animation.images) for (const img of direccion) img.bitmap.close();
+    animationCache.delete(key);
+  }
 }
