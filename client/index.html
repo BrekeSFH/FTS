@@ -50,6 +50,26 @@
         </div>
         <pre id="preview-body"></pre>
       </section>
+
+      <section id="lobby">
+        <h2>Lobby multijugador</h2>
+        <p class="hint">
+          Puntos moviéndose en una grilla vacía, sincronizados por el servidor. Abrí esta
+          página en dos pestañas para ver los dos puntos.
+        </p>
+        <div class="actions">
+          <label>
+            Nombre
+            <input id="lobby-name" type="text" maxlength="16" placeholder="Raider" />
+          </label>
+          <button id="lobby-connect" type="button">Conectar</button>
+          <span id="lobby-status" class="muted" role="status"></span>
+        </div>
+        <div id="lobby-board" hidden>
+          <canvas id="lobby-canvas"></canvas>
+          <p class="hint">Flechas o WASD para moverte; Q, E, Z y C para las diagonales.</p>
+        </div>
+      </section>
     </main>
 
     <script type="module" src="/src/main.ts"></script>

@@ -13,3 +13,5 @@ build/
 *.SPR
 *.zar
 *.ZAR
+*.til
+*.TIL
