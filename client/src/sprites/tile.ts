@@ -7,12 +7,18 @@
  *
  *   0x00   "<tile>"      firma
  *   0x06   00            constante
- *   0x07   uint8         versión; se vieron '9', '8', '7', '6' y 0x31
- *   0x08   …             campos de largo variable según la versión
- *   …      "<tiledata>"  arranca entre 0x1F y 0x22 según la versión
+ *   0x07   cadena        versión terminada en NUL: "6", "7", "8", "9" o "10"
+ *   +1     3 bytes       sin identificar
+ *   +4     uint32 x4     ancla X, ancla Y, ancho y alto
+ *   …      "<tiledata>"  arranca entre 0x1F y 0x22 según el largo de la versión
  *   +10    00 31 00      constante tras "<tiledata>"
  *   +13    uint32        cantidad de ZAR que siguen
  *   +17    ZAR           el primero, en forma completa
+ *
+ * El ancla es el punto de la imagen que se apoya en la celda, y es lo que
+ * permite plantar una pared alta sobre el mismo rombo que un piso. Los
+ * tamaños declarados coinciden con los del ZAR en 9840 de 9843 pisos y 9901
+ * de 9907 paredes, que es lo que da confianza en el resto del parseo.
  *
  * La cabecera de `<tile>` cambia de largo con la versión, así que buscar el
  * ZAR por su firma es frágil: hay tiles cuyos píxeles contienen los bytes de
@@ -41,10 +47,20 @@ export class InvalidTileError extends Error {
 }
 
 export interface TileImage extends ZarImage {
-  /** Versión declarada en el byte 7. */
-  version: number;
+  /** Versión declarada en la cabecera: "6", "7", "8", "9" o "10". */
+  version: string;
   /** Cuántos ZAR declara el envoltorio. Solo se decodifica el primero. */
   zarCount: number;
+  /**
+   * Punto de la imagen que se apoya en la celda. Dibujar el tile con su ancla
+   * sobre el punto de referencia de la celda es lo que alinea un piso con una
+   * pared que lo dobla en alto.
+   */
+  anchorX: number;
+  anchorY: number;
+  /** Tamaño que declara el envoltorio; debería coincidir con el del ZAR. */
+  declaredWidth: number;
+  declaredHeight: number;
 }
 
 function matchesAscii(bytes: Uint8Array, text: string, at: number): boolean {
@@ -57,6 +73,28 @@ function matchesAscii(bytes: Uint8Array, text: string, at: number): boolean {
 
 export function isTile(bytes: Uint8Array): boolean {
   return matchesAscii(bytes, TILE_MAGIC, 0);
+}
+
+/** Largo máximo razonable de la cadena de versión, como cota de la búsqueda. */
+const MAX_VERSION_LENGTH = 8;
+
+/**
+ * Lee la versión y dice dónde arrancan los cuatro uint32 que la siguen.
+ *
+ * La versión es una cadena, no un byte: "10" corre todo lo que viene después
+ * un lugar respecto de "9". Leerla como byte da 0x31 para "10" y desalinea
+ * los campos.
+ */
+function readVersion(bytes: Uint8Array): { version: string; fieldsAt: number } {
+  const start = TILE_MAGIC.length + 1;
+  let end = start;
+  while (end < start + MAX_VERSION_LENGTH && end < bytes.length && bytes[end] !== 0) end++;
+  if (end >= bytes.length || bytes[end] !== 0) {
+    throw new InvalidTileError('La versión del tile no termina en NUL');
+  }
+  let version = '';
+  for (let i = start; i < end; i++) version += String.fromCharCode(bytes[i]);
+  return { version, fieldsAt: end + 1 + 3 };
 }
 
 /** Ubica `<tiledata>` dentro de la cabecera. Devuelve -1 si no está. */
@@ -77,6 +115,11 @@ function findTiledata(bytes: Uint8Array): number {
 export function decodeTile(bytes: Uint8Array): TileImage {
   if (!isTile(bytes)) throw new InvalidTileError('El archivo no empieza con la firma <tile>');
 
+  // Se parsea en el orden del archivo: la versión viene antes que <tiledata>
+  // y de su largo depende dónde caen los cuatro campos.
+  const { version, fieldsAt } = readVersion(bytes);
+  if (fieldsAt + 16 > bytes.length) throw new InvalidTileError('El tile se corta en la cabecera');
+
   const tiledata = findTiledata(bytes);
   if (tiledata < 0) {
     throw new InvalidTileError('No se encontró <tiledata> en la cabecera del tile');
@@ -90,5 +133,13 @@ export function decodeTile(bytes: Uint8Array): TileImage {
   const zarAt = tiledata + ZAR_OFFSET_FROM_TILEDATA;
   if (zarAt >= bytes.length) throw new InvalidTileError('El tile se corta antes del primer ZAR');
 
-  return { ...decodeZar(bytes.subarray(zarAt)), version: bytes[7], zarCount };
+  return {
+    ...decodeZar(bytes.subarray(zarAt)),
+    version,
+    zarCount,
+    anchorX: view.getUint32(fieldsAt, true),
+    anchorY: view.getUint32(fieldsAt + 4, true),
+    declaredWidth: view.getUint32(fieldsAt + 8, true),
+    declaredHeight: view.getUint32(fieldsAt + 12, true),
+  };
 }
