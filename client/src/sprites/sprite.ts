@@ -16,8 +16,8 @@
  *   +0   "<spranim>" 00 '1' 00
  *   +12  uint32                  offset del bloque de datos, medido desde 0x0C
  *   +16  uint32 + nombre         largo y nombre de la animación
- *   +N   uint32                  cantidad de direcciones
- *   +N+4 uint32                  frames por dirección
+ *   +N   uint32                  frames por dirección
+ *   +N+4 uint32                  cantidad de direcciones
  *   +N+8 direcciones x frames    tabla de rectángulos, 16 bytes por imagen:
  *                                izquierda, arriba, derecha y abajo en uint32.
  *                                El siguiente encabezado arranca justo después
@@ -177,8 +177,14 @@ export function readSpriteAnimations(bytes: Uint8Array): SpriteAnimation[] {
     }
 
     const after = nameAt + nameLength;
-    const directions = view.getUint32(after, true);
-    const framesPerDirection = view.getUint32(after + 4, true);
+    // El primero es la cantidad de frames y el segundo la de direcciones, no
+    // al revés: se comprobó sobre "MF Upright Run", que declara 10 y 8. Los
+    // índices 0..9 son diez frames de la misma orientación y saltando de a 10
+    // salen las ocho orientaciones. Leerlo invertido pasa inadvertido en las
+    // animaciones de 8x8, que son muchas, y el total no cambia porque es el
+    // producto.
+    const framesPerDirection = view.getUint32(after, true);
+    const directions = view.getUint32(after + 4, true);
     const imageCount = directions * framesPerDirection;
     const tableAt = after + 8;
     if (tableAt + imageCount * FRAME_TABLE_STRIDE > bytes.length) {
@@ -361,6 +367,80 @@ function emptyFrame(animation: string, frameIndex: number): SpriteFrame {
 export interface DecodeSpriteFrameOptions {
   /** Cuál de las cuatro paletas usar. La 0 es la de color. */
   paletteIndex?: number;
+}
+
+/**
+ * Decodifica todas las imágenes guardadas de una animación.
+ *
+ * Existe aparte de `decodeSpriteFrame` porque el bloque de la animación puede
+ * venir comprimido, y pedir las imágenes de a una lo infla otras tantas
+ * veces. En un sprite de personaje eso son decenas de inflados de varios
+ * megabytes cada uno; acá se infla una sola vez.
+ */
+export async function decodeSpriteAnimation(
+  bytes: Uint8Array,
+  animationIndex = 0,
+  { paletteIndex = 0 }: DecodeSpriteFrameOptions = {},
+): Promise<SpriteFrame[]> {
+  const animations = readSpriteAnimations(bytes);
+  const animation = animations[animationIndex];
+  if (!animation) throw new InvalidSpriteError(`No existe la animación ${animationIndex}`);
+  if (paletteIndex < 0 || paletteIndex >= PALETTE_BLOCKS) {
+    throw new InvalidSpriteError(`Paleta ${paletteIndex} fuera de rango`);
+  }
+
+  const payload = await readAnimationPayload(bytes, animation);
+  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+  const paletteAt = paletteOffset(view, paletteIndex);
+
+  const out: SpriteFrame[] = [];
+  let at = findFrame(payload, afterPalettes(payload, view));
+  // El bloque puede tener más imágenes de las que la animación declara; se
+  // corta en el total declarado para no arrastrar las que no le pertenecen.
+  while (at >= 0 && at + FRAME_HEADER <= payload.length && out.length < animation.imageCount) {
+    out.push(frameAt(payload, view, at, paletteAt, animation.name, out.length, animation.rects));
+    at = findFrame(payload, at + FRAME_HEADER + view.getUint32(at + FRAME_SIZE_OFFSET, true));
+  }
+  if (out.length === 0 && isAllZero(payload, afterPalettes(payload, view))) {
+    out.push(emptyFrame(animation.name, 0));
+  }
+  return out;
+}
+
+/** Offset de los colores de una paleta dentro del bloque. */
+function paletteOffset(view: DataView, paletteIndex: number): number {
+  let at = 0;
+  for (let i = 0; i < paletteIndex; i++) at += 4 + view.getUint32(at, true) * 4;
+  return at + 4; // saltear la cantidad de colores
+}
+
+/** Decodifica la imagen que empieza en `at`. */
+function frameAt(
+  payload: Uint8Array,
+  view: DataView,
+  at: number,
+  paletteAt: number,
+  animationName: string,
+  frameIndex: number,
+  rects: readonly SpriteRect[],
+): SpriteFrame {
+  const width = view.getUint32(at + 8, true);
+  const height = view.getUint32(at + 12, true);
+  const declaredDataSize = view.getUint32(at + FRAME_SIZE_OFFSET, true);
+  if (width * height > 64 * 1024 * 1024) {
+    throw new InvalidSpriteError(`Frame demasiado grande: ${width}x${height}`);
+  }
+
+  const dataStart = at + FRAME_HEADER;
+  const available = Math.max(0, payload.length - dataStart);
+  const data = payload.subarray(dataStart, dataStart + Math.min(declaredDataSize, available));
+  return {
+    ...decodeZarRuns(data, width, height, payload, paletteAt),
+    declaredDataSize,
+    animation: animationName,
+    frameIndex,
+    rect: declaredRect(rects[frameIndex]),
+  };
 }
 
 /**

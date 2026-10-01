@@ -80,8 +80,9 @@ async function makeSprite(
     ...ascii('<spranim>'), 0x00, 0x31, 0x00,
     ...u32(0), // offset, se completa abajo
     ...u32(spec.name.length), ...ascii(spec.name),
-    ...u32(spec.directions ?? 1),
+    // Primero los frames por dirección y después las direcciones, en ese orden.
     ...u32(spec.frames.length / (spec.directions ?? 1)),
+    ...u32(spec.directions ?? 1),
     ...(spec.rects
       ? spec.rects.flatMap((r) => r.flatMap(u32))
       : new Array(spec.frames.length * 16).fill(0x00)),

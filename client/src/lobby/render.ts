@@ -43,16 +43,20 @@ export interface RenderOptions {
    */
   wallAt?: (gx: number, gy: number) => boolean;
   /**
-   * Sprites del jugador, uno por dirección y en el orden del campo `facing`.
-   * Si trae uno solo se usa para todas. Sin esto se dibuja un punto.
+   * Con qué sprite dibujar a cada jugador. Devolver `null` deja el punto.
+   *
+   * Es una función y no una lista porque el frame de la animación depende del
+   * reloj, y el reloj vive en quien llama, no acá.
    */
-  character?: readonly PlacedTile[] | null;
+  character?: ((player: LobbyPlayer, sessionId: string) => PlacedTile | null) | null;
 }
 
 const BACK_EDGES = (gx: number, gy: number): boolean => gx === 0 || gy === 0;
 
 /** Radio del punto que representa a un jugador. */
 const DOT_RADIUS = 7;
+/** Sitio que se deja arriba para que no se corte un personaje de la fila del fondo. */
+const CHARACTER_HEADROOM = 80;
 
 /** Cuánto sobresale un tile de su celda, para agrandar el canvas. */
 function overhang(tile: PlacedTile | null | undefined): { top: number; left: number } {
@@ -79,14 +83,11 @@ function drawPlayer(
   context: CanvasRenderingContext2D,
   player: LobbyPlayer,
   own: boolean,
-  character: readonly PlacedTile[] | null,
+  sprite: PlacedTile | null,
 ): void {
   const { x, y } = cellCenter(player.x, player.y);
 
-  if (character && character.length > 0) {
-    // Si la animación no cubre los ocho rumbos se cae al primero, que es
-    // preferible a mostrar una dirección equivocada.
-    const sprite = character[player.facing] ?? character[0];
+  if (sprite) {
     const pos = placeTile(player.x, player.y, sprite.anchorX, sprite.anchorY);
     // El propio se marca con un anillo en el piso, porque todos los sprites
     // son iguales mientras no haya uno por jugador.
@@ -142,11 +143,11 @@ export function renderLobby(
   if (!context) return;
 
   // Las paredes sobresalen bastante por arriba de su celda.
-  // De los sprites se toma el que más sobresale: todos ocupan lo mismo salvo
-  // por unos píxeles de diferencia entre direcciones.
-  const salientes = [floor, wall, ...(character ?? [])].map(overhang);
+  const salientes = [floor, wall].map(overhang);
+  // Un personaje sobresale mucho menos que una pared, pero igual se le deja
+  // sitio: sin esto una cabeza queda cortada contra el borde de arriba.
   const bounds = gridBounds(state.width, state.height, {
-    top: Math.max(...salientes.map((s) => s.top)),
+    top: Math.max(...salientes.map((s) => s.top), CHARACTER_HEADROOM),
     left: Math.max(...salientes.map((s) => s.left)),
   });
 
@@ -184,7 +185,7 @@ export function renderLobby(
     }
 
     for (const { player, sessionId } of porCelda.get(`${cell.x},${cell.y}`) ?? []) {
-      drawPlayer(context, player, sessionId === ownSessionId, character);
+      drawPlayer(context, player, sessionId === ownSessionId, character ? character(player, sessionId) : null);
     }
   }
 }
