@@ -13,6 +13,7 @@ import { isSprite } from './sprites/sprite';
 import { isTile } from './sprites/tile';
 import { isZar } from './sprites/zar';
 import { setupLobby } from './lobby/ui';
+import { FLOOR_TILE_HEIGHT, FLOOR_TILE_WIDTH, clearTileCache, loadTile } from './iso/tileset';
 
 /** Límite de filas renderizadas; los .BOS pueden tener miles de entradas. */
 const MAX_ROWS = 500;
@@ -82,6 +83,9 @@ async function openArchive(): Promise<void> {
   try {
     await current?.close();
     current = null;
+    // Los tiles cacheados son del archivo anterior.
+    clearTileCache();
+    lobby.setFloor(null);
     current = await BosArchive.open(file);
     renderArchive(current);
     setStatus('');
@@ -158,6 +162,14 @@ function renderEntries(): void {
       view.addEventListener('click', () => void previewEntry(entry));
       save.addEventListener('click', () => void downloadEntry(entry));
       actions.append(view, ' ', save);
+
+      // Un tile puede usarse de piso en el lobby sin salir del explorador.
+      if (entry.extension === 'til') {
+        const floor = el('button', 'Piso', 'small');
+        floor.type = 'button';
+        floor.addEventListener('click', () => void useAsFloor(entry));
+        actions.append(' ', floor);
+      }
 
       row.append(
         el('td', entry.path),
@@ -236,6 +248,25 @@ async function previewEntry(entry: BosEntry): Promise<void> {
   }
 }
 
+/** Usa un `.TIL` como piso del lobby. */
+async function useAsFloor(entry: BosEntry): Promise<void> {
+  if (!current) return;
+  setStatus(`Cargando ${entry.path} como piso…`);
+  try {
+    const tile = await loadTile(entry.path, await current.readBytes(entry.path));
+    lobby.setFloor(tile.bitmap);
+    setStatus(
+      tile.fitsGrid
+        ? `Piso del lobby: ${entry.path}.`
+        : `Piso del lobby: ${entry.path}, pero mide ${tile.width}×${tile.height} y el paso del rombo` +
+          ` es ${FLOOR_TILE_WIDTH}×${FLOOR_TILE_HEIGHT}: va a quedar con costuras.`,
+    );
+  } catch (err) {
+    console.error(err);
+    setStatus(`No se pudo usar ${entry.path} como piso: ${(err as Error).message}`, true);
+  }
+}
+
 async function downloadEntry(entry: BosEntry): Promise<void> {
   if (!current) return;
   setStatus(`Descomprimiendo ${entry.path}…`);
@@ -257,7 +288,7 @@ async function downloadEntry(entry: BosEntry): Promise<void> {
 ui.pick.addEventListener('click', () => void openArchive());
 ui.filter.addEventListener('input', renderEntries);
 
-setupLobby({
+const lobby = setupLobby({
   connect: $<HTMLButtonElement>('lobby-connect'),
   name: $<HTMLInputElement>('lobby-name'),
   status: $('lobby-status'),
