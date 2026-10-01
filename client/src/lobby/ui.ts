@@ -5,7 +5,7 @@
  * servidor esté caído no debe afectar al explorador, y viceversa.
  */
 import { connectToLobby, sendStep, stepForKey, type LobbyRoom } from './connection';
-import { renderLobby } from './render';
+import { renderLobby, type PlacedTile } from './render';
 
 export interface LobbyElements {
   connect: HTMLButtonElement;
@@ -17,12 +17,15 @@ export interface LobbyElements {
 
 export interface LobbyHandle {
   /** Cambia el tile de piso. `null` vuelve a los rombos de alambre. */
-  setFloor(floor: ImageBitmap | null): void;
+  setFloor(floor: PlacedTile | null): void;
+  /** Cambia el tile de pared del fondo. `null` lo saca. */
+  setWall(wall: PlacedTile | null): void;
 }
 
 export function setupLobby(ui: LobbyElements): LobbyHandle {
   let room: LobbyRoom | null = null;
-  let floor: ImageBitmap | null = null;
+  let floor: PlacedTile | null = null;
+  let wall: PlacedTile | null = null;
 
   const setStatus = (message: string, isError = false): void => {
     ui.status.textContent = message;
@@ -34,7 +37,7 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     // puede no haber nada que dibujar todavía. El primer `onStateChange` lo
     // resuelve enseguida.
     if (!room?.state?.players) return;
-    renderLobby(ui.canvas, room.state, { ownSessionId: room.sessionId, floor });
+    renderLobby(ui.canvas, room.state, { ownSessionId: room.sessionId, floor, wall });
   };
 
   const disconnect = (reason: string, isError = false): void => {
@@ -87,6 +90,10 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
   return {
     setFloor(next) {
       floor = next;
+      draw();
+    },
+    setWall(next) {
+      wall = next;
       draw();
     },
   };

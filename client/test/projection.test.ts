@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CELL_ANCHOR_X,
+  CELL_ANCHOR_Y,
   HALF_HEIGHT,
   HALF_WIDTH,
   TILE_HEIGHT,
@@ -8,6 +10,7 @@ import {
   drawOrder,
   gridBounds,
   gridToScreen,
+  placeTile,
   screenToGrid,
 } from '../src/iso/projection';
 
@@ -129,5 +132,48 @@ describe('drawOrder', () => {
       expect(celda.y).toBeGreaterThanOrEqual(0);
       expect(celda.y).toBeLessThan(7);
     }
+  });
+});
+
+describe('placeTile', () => {
+  it('deja el piso donde ya estaba', () => {
+    // Un piso típico declara su ancla justo en el punto de la celda, así que
+    // tiene que caer exactamente en la esquina del rombo.
+    for (const [gx, gy] of [[0, 0], [3, 2], [7, 11]]) {
+      expect(placeTile(gx, gy, CELL_ANCHOR_X, CELL_ANCHOR_Y)).toEqual(gridToScreen(gx, gy));
+    }
+  });
+
+  it('sube la pared para que se apoye en el mismo rombo', () => {
+    // Una pared de 115 px declara su ancla cerca del pie de la imagen.
+    const anchorY = 113;
+    const piso = placeTile(4, 4, CELL_ANCHOR_X, CELL_ANCHOR_Y);
+    const pared = placeTile(4, 4, CELL_ANCHOR_X, anchorY);
+    expect(pared.x).toBe(piso.x);
+    expect(piso.y - pared.y).toBe(anchorY - CELL_ANCHOR_Y);
+  });
+
+  it('corre en horizontal según el ancla del tile', () => {
+    expect(placeTile(0, 0, CELL_ANCHOR_X + 5, CELL_ANCHOR_Y).x).toBe(-5);
+  });
+});
+
+describe('gridBounds con margen', () => {
+  it('agranda la caja y corre el origen', () => {
+    const sin = gridBounds(8, 6);
+    const con = gridBounds(8, 6, { top: 70, left: 12 });
+    expect(con.width).toBe(sin.width + 12);
+    expect(con.height).toBe(sin.height + 70);
+    expect(con.minX).toBe(sin.minX - 12);
+    expect(con.minY).toBe(sin.minY - 70);
+  });
+
+  it('deja entrar una pared alta que sobresale de la fila del fondo', () => {
+    const anchorY = 113;
+    const alto = 115;
+    const bounds = gridBounds(10, 10, { top: anchorY - CELL_ANCHOR_Y });
+    const pared = placeTile(0, 0, CELL_ANCHOR_X, anchorY);
+    expect(pared.y).toBeGreaterThanOrEqual(bounds.minY);
+    expect(pared.y + alto).toBeLessThanOrEqual(bounds.minY + bounds.height);
   });
 });

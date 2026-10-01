@@ -20,7 +20,7 @@ describe('tiles reales', () => {
     expect(entries.length).toBeGreaterThan(1000);
 
     const problems: string[] = [];
-    const versions = new Map<number, number>();
+    const versions = new Map<string, number>();
     let multiZar = 0;
     let totalPixels = 0;
 
@@ -43,6 +43,18 @@ describe('tiles reales', () => {
           problems.push(`${entry.filename}: consumió ${tile.bytesConsumed} de ${tile.declaredDataSize} bytes`);
         }
         versions.set(tile.version, (versions.get(tile.version) ?? 0) + 1);
+        // El tamaño declarado confirma que la cabecera se parseó alineada:
+        // con la versión leída como byte, "10" desalineaba los campos. En los
+        // tiles de un solo ZAR tiene que coincidir exacto; en los animados es
+        // la caja que contiene todos los frames, así que solo puede ser mayor.
+        const exacto = tile.declaredWidth === tile.width && tile.declaredHeight === tile.height;
+        const contiene = tile.declaredWidth >= tile.width && tile.declaredHeight >= tile.height;
+        if (tile.zarCount === 1 ? !exacto : !contiene) {
+          problems.push(
+            `${entry.filename}: ${tile.zarCount} ZAR, declara ${tile.declaredWidth}×${tile.declaredHeight}` +
+              ` y el primero mide ${tile.width}×${tile.height}`,
+          );
+        }
         if (tile.zarCount > 1) multiZar++;
         totalPixels += tile.width * tile.height;
       } catch (err) {
@@ -54,7 +66,7 @@ describe('tiles reales', () => {
     expect(problems.slice(0, 10)).toEqual([]);
     const porVersion = [...versions]
       .sort((a, b) => b[1] - a[1])
-      .map(([v, n]) => `0x${v.toString(16)}×${n}`)
+      .map(([v, n]) => `"${v}"×${n}`)
       .join(' ');
     console.log(
       `\n${entries.length} .til decodificados, ${totalPixels.toLocaleString('es')} píxeles` +

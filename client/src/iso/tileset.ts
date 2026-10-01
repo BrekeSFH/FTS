@@ -17,7 +17,10 @@ export interface LoadedTile {
   bitmap: ImageBitmap;
   width: number;
   height: number;
-  /** Si no encaja con el paso del rombo, el piso va a quedar con costuras. */
+  /** Punto de la imagen que se apoya en la celda. */
+  anchorX: number;
+  anchorY: number;
+  /** Si no encaja con el paso del rombo, un piso va a quedar con costuras. */
   fitsGrid: boolean;
 }
 
@@ -41,6 +44,8 @@ export async function loadTile(key: string, bytes: Uint8Array): Promise<LoadedTi
     bitmap,
     width: image.width,
     height: image.height,
+    anchorX: image.anchorX,
+    anchorY: image.anchorY,
     fitsGrid: tileFitsGrid(image.width, image.height),
   };
   cache.set(key, loaded);

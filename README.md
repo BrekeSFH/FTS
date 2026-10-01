@@ -79,7 +79,11 @@ El GDD exige autoridad del servidor en todos los modos, así que **el cliente no
 
 La grilla del lobby es isométrica, con la misma proyección que usa el juego. Las medidas no se supusieron: salieron de medir la silueta de los tiles de piso. En un tile de 73×37 el ápice cae en la columna 36 y cada fila crece 4 px, dos por lado, lo que describe un rombo de **72×36 de paso**; la imagen es un píxel más grande en cada eje para que los vecinos se solapen y no queden costuras.
 
-Sin un `.BOS` abierto el piso se dibuja como rombos de alambre, que ya muestran la proyección real. Con uno abierto, el botón **Piso** de cada entrada `.til` lo usa de suelo: el tile se decodifica una vez, se cachea como `ImageBitmap` y se repite por toda la grilla. Cachearlo en IndexedDB, como sugiere el GDD, es un paso que todavía no hizo falta.
+Cada tile declara en su cabecera un **ancla**: el punto de la imagen que se apoya en la celda. Eso es lo que permite que una pared de 115 px de alto se plante en el mismo rombo que un piso de 37. Los pisos declaran el ancla en (ancho/2, 43) y las paredes entre 107 y 113, que es cuánto sobresalen hacia arriba.
+
+Todo se dibuja en un solo recorrido de atrás hacia adelante, con los jugadores intercalados por celda y no en una pasada aparte: uno parado detrás de una pared tiene que quedar tapado por ella.
+
+Sin un `.BOS` abierto el piso se dibuja como rombos de alambre, que ya muestran la proyección real. Con uno abierto, los botones **Piso** y **Pared** de cada entrada `.til` la usan de suelo o de muro del fondo: el tile se decodifica una vez, se cachea como `ImageBitmap` y se repite por toda la grilla. Cachearlo en IndexedDB, como sugiere el GDD, es un paso que todavía no hizo falta.
 
 Código relevante:
 

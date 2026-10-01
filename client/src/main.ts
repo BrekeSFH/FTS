@@ -86,6 +86,7 @@ async function openArchive(): Promise<void> {
     // Los tiles cacheados son del archivo anterior.
     clearTileCache();
     lobby.setFloor(null);
+    lobby.setWall(null);
     current = await BosArchive.open(file);
     renderArchive(current);
     setStatus('');
@@ -163,12 +164,14 @@ function renderEntries(): void {
       save.addEventListener('click', () => void downloadEntry(entry));
       actions.append(view, ' ', save);
 
-      // Un tile puede usarse de piso en el lobby sin salir del explorador.
+      // Un tile puede probarse en el lobby sin salir del explorador.
       if (entry.extension === 'til') {
         const floor = el('button', 'Piso', 'small');
-        floor.type = 'button';
-        floor.addEventListener('click', () => void useAsFloor(entry));
-        actions.append(' ', floor);
+        const wall = el('button', 'Pared', 'small');
+        floor.type = wall.type = 'button';
+        floor.addEventListener('click', () => void useAsTile(entry, 'floor'));
+        wall.addEventListener('click', () => void useAsTile(entry, 'wall'));
+        actions.append(' ', floor, ' ', wall);
       }
 
       row.append(
@@ -248,22 +251,28 @@ async function previewEntry(entry: BosEntry): Promise<void> {
   }
 }
 
-/** Usa un `.TIL` como piso del lobby. */
-async function useAsFloor(entry: BosEntry): Promise<void> {
+/** Usa un `.TIL` como piso o como pared del fondo del lobby. */
+async function useAsTile(entry: BosEntry, role: 'floor' | 'wall'): Promise<void> {
   if (!current) return;
-  setStatus(`Cargando ${entry.path} como piso…`);
+  const etiqueta = role === 'floor' ? 'piso' : 'pared';
+  setStatus(`Cargando ${entry.path} como ${etiqueta}…`);
   try {
     const tile = await loadTile(entry.path, await current.readBytes(entry.path));
-    lobby.setFloor(tile.bitmap);
-    setStatus(
-      tile.fitsGrid
-        ? `Piso del lobby: ${entry.path}.`
-        : `Piso del lobby: ${entry.path}, pero mide ${tile.width}×${tile.height} y el paso del rombo` +
-          ` es ${FLOOR_TILE_WIDTH}×${FLOOR_TILE_HEIGHT}: va a quedar con costuras.`,
-    );
+    const colocado = { bitmap: tile.bitmap, anchorX: tile.anchorX, anchorY: tile.anchorY };
+    if (role === 'floor') lobby.setFloor(colocado);
+    else lobby.setWall(colocado);
+
+    // Solo el piso necesita encajar con el paso del rombo: una pared se apoya
+    // por su ancla y puede medir cualquier cosa.
+    const aviso =
+      role === 'floor' && !tile.fitsGrid
+        ? `, pero mide ${tile.width}×${tile.height} y el paso del rombo es` +
+          ` ${FLOOR_TILE_WIDTH}×${FLOOR_TILE_HEIGHT}: va a quedar con costuras`
+        : ` (${tile.width}×${tile.height}, ancla ${tile.anchorX},${tile.anchorY})`;
+    setStatus(`${etiqueta[0].toUpperCase()}${etiqueta.slice(1)} del lobby: ${entry.path}${aviso}.`);
   } catch (err) {
     console.error(err);
-    setStatus(`No se pudo usar ${entry.path} como piso: ${(err as Error).message}`, true);
+    setStatus(`No se pudo usar ${entry.path} como ${etiqueta}: ${(err as Error).message}`, true);
   }
 }
 

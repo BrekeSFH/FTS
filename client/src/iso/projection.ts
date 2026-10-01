@@ -14,6 +14,17 @@ export const TILE_HEIGHT = 36;
 export const HALF_WIDTH = TILE_WIDTH / 2;
 export const HALF_HEIGHT = TILE_HEIGHT / 2;
 
+/**
+ * Punto de la celda sobre el que se apoya el ancla de un tile.
+ *
+ * Sale del censo de los 29.957 `.TIL`: los pisos declaran un ancla en
+ * (ancho/2, 43) de forma abrumadora, y las paredes la declaran entre 107 y
+ * 113, que es lo que las hace sobresalir hacia arriba apoyadas en el mismo
+ * rombo. Con estas constantes un piso cae exactamente donde caía antes.
+ */
+export const CELL_ANCHOR_X = HALF_WIDTH;
+export const CELL_ANCHOR_Y = 43;
+
 export interface Point {
   x: number;
   y: number;
@@ -25,6 +36,16 @@ export interface Point {
  */
 export function gridToScreen(gx: number, gy: number): Point {
   return { x: (gx - gy) * HALF_WIDTH, y: (gx + gy) * HALF_HEIGHT };
+}
+
+/**
+ * Dónde pegar la imagen de un tile para que su ancla caiga en la celda. Es lo
+ * que permite que una pared de 115 px de alto se apoye en el mismo rombo que
+ * un piso de 37.
+ */
+export function placeTile(gx: number, gy: number, anchorX: number, anchorY: number): Point {
+  const { x, y } = gridToScreen(gx, gy);
+  return { x: x + CELL_ANCHOR_X - anchorX, y: y + CELL_ANCHOR_Y - anchorY };
 }
 
 /** Centro del rombo, para parar algo encima de la celda. */
@@ -54,15 +75,24 @@ export interface Bounds {
   height: number;
 }
 
+/** Margen extra alrededor de la grilla, para los tiles que sobresalen. */
+export interface Padding {
+  top?: number;
+  right?: number;
+  bottom?: number;
+  left?: number;
+}
+
 /**
  * Rectángulo que ocupa una grilla entera en pantalla. La columna 0 queda a la
  * derecha del todo y la fila 0 arriba, así que `minX` es negativo.
  */
-export function gridBounds(columns: number, rows: number): Bounds {
-  const minX = -(rows - 1) * HALF_WIDTH;
-  const maxX = (columns - 1) * HALF_WIDTH + TILE_WIDTH;
-  const maxY = (columns - 1 + rows - 1) * HALF_HEIGHT + TILE_HEIGHT;
-  return { minX, minY: 0, width: maxX - minX, height: maxY };
+export function gridBounds(columns: number, rows: number, pad: Padding = {}): Bounds {
+  const { top = 0, right = 0, bottom = 0, left = 0 } = pad;
+  const minX = -(rows - 1) * HALF_WIDTH - left;
+  const maxX = (columns - 1) * HALF_WIDTH + TILE_WIDTH + right;
+  const maxY = (columns - 1 + rows - 1) * HALF_HEIGHT + TILE_HEIGHT + bottom;
+  return { minX, minY: -top, width: maxX - minX, height: maxY + top };
 }
 
 /**
