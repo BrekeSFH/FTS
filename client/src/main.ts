@@ -1,6 +1,7 @@
 import { BosArchive, UnsupportedArchiveError, type BosEntry } from './bos/archive';
 import { pickBosFile, supportsFileSystemAccess } from './bos/filePicker';
 import { toHex } from './bos/signature';
+import { decodeZar, isZar } from './sprites/zar';
 
 /** Límite de filas renderizadas; los .BOS pueden tener miles de entradas. */
 const MAX_ROWS = 500;
@@ -21,6 +22,8 @@ const ui = {
   preview: $('preview'),
   previewTitle: $('preview-title'),
   previewBody: $('preview-body'),
+  previewImage: $('preview-image'),
+  previewCanvas: $<HTMLCanvasElement>('preview-canvas'),
 };
 
 let current: BosArchive | null = null;
@@ -175,16 +178,52 @@ function hexDump(bytes: Uint8Array): string {
   return lines.join('\n');
 }
 
+/**
+ * Dibuja un ZAR en el canvas. Devuelve la descripción para el título, o null
+ * si el archivo no es un ZAR y hay que caer a la vista de texto o hexadecimal.
+ */
+function drawZar(bytes: Uint8Array): string | null {
+  if (!isZar(bytes)) return null;
+  const image = decodeZar(bytes);
+  const context = ui.previewCanvas.getContext('2d');
+  if (!context) return null;
+
+  ui.previewCanvas.width = image.width;
+  ui.previewCanvas.height = image.height;
+  context.putImageData(new ImageData(image.pixels, image.width, image.height), 0, 0);
+
+  const expected = image.width * image.height;
+  const partial = image.pixelsWritten < expected ? ` — truncado: ${image.pixelsWritten} de ${expected} píxeles` : '';
+  return `ZAR ${image.width}×${image.height}${partial}`;
+}
+
 async function previewEntry(entry: BosEntry): Promise<void> {
   if (!current) return;
   setStatus(`Descomprimiendo ${entry.path}…`);
   try {
     const bytes = await current.readBytes(entry.path);
-    const head = bytes.subarray(0, PREVIEW_BYTES);
-    ui.previewTitle.textContent = `${entry.path} (${formatBytes(bytes.length)})`;
-    ui.previewBody.textContent = isMostlyText(head)
-      ? new TextDecoder('latin1').decode(head)
-      : hexDump(head);
+
+    let described: string | null = null;
+    try {
+      described = drawZar(bytes);
+    } catch (err) {
+      // Un ZAR corrupto no debe romper la vista previa: se cae al hexadecimal.
+      console.warn(`No se pudo decodificar ${entry.path} como ZAR`, err);
+    }
+
+    ui.previewImage.hidden = described === null;
+    ui.previewBody.hidden = described !== null;
+
+    if (described === null) {
+      const head = bytes.subarray(0, PREVIEW_BYTES);
+      ui.previewTitle.textContent = `${entry.path} (${formatBytes(bytes.length)})`;
+      ui.previewBody.textContent = isMostlyText(head)
+        ? new TextDecoder('latin1').decode(head)
+        : hexDump(head);
+    } else {
+      ui.previewTitle.textContent = `${entry.path} (${formatBytes(bytes.length)}) — ${described}`;
+    }
+
     ui.preview.hidden = false;
     ui.preview.scrollIntoView({ behavior: 'smooth' });
     setStatus('');
