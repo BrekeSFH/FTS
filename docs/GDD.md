@@ -77,12 +77,21 @@ Esta decisión depende de la lista cerrada de participantes (punto 3): como el s
 ## 6. Hitos Iniciales para la Inteligencia Artificial (Primeros Pasos)
 
 ⚠️ **INSTRUCCIÓN ESTRICTA PARA EL ASISTENTE DE CÓDIGO (CLAUDE):**
-NO intentes programar toda la arquitectura del servidor, el cliente y la lógica del juego en una sola respuesta. Tu objetivo actual es enfocarte **ÚNICA Y EXCLUSIVAMENTE en el Hito 1**. Detente inmediatamente después de completar el Hito 1 y espera el feedback del usuario antes de avanzar al siguiente punto.
+NO intentes programar toda la arquitectura del servidor, el cliente y la lógica del juego en una sola respuesta. Trabajá de a un hito por vez, detenete al terminarlo y esperá el feedback del usuario antes de avanzar al siguiente.
 
-* **Hito 1 (OBJETIVO ACTUAL):** Crear un script en TypeScript para el navegador capaz de pedirle al usuario su archivo `.BOS` local de Fallout Tactics, parsearlo y extraer su contenido.
-  * Los `.BOS` serían archivos ZIP con otra extensión. **Verificar la firma del archivo (`PK\x03\x04`) antes de asumirlo.** Si se confirma, usar una librería existente (fflate o zip.js) en lugar de un parser binario propio.
-  * Los archivos pueden ser grandes: listar las entradas y descomprimirlas bajo demanda, sin cargar todo en memoria.
-  * Usar File System Access API cuando esté disponible, con fallback a `<input type="file">`.
-* **Hito 2:** Escribir un decodificador para leer un sprite isométrico extraído en el paso anterior y renderizar un único frame en un Canvas 2D de HTML5.
-  * Distinción a tener en cuenta: los `.SPR` son sprites de personajes que contienen sus frames comprimidos en formato ZAR; los `.ZAR` sueltos son imágenes individuales.
-* **Hito 3:** Establecer la estructura base del servidor Node.js (Colyseus) para sincronizar un lobby básico de "puntos moviéndose en una grilla vacía" entre dos navegadores.
+**Los tres hitos iniciales están completos.** Lo que sigue se decide con el usuario, no por esta lista.
+
+* **Hito 1 — HECHO:** Script en TypeScript para el navegador capaz de pedirle al usuario su archivo `.BOS` local, parsearlo y extraer su contenido.
+  * Los `.BOS` resultaron ser ZIP con otra extensión, sin datos antepuestos en ninguno de los 40 de una instalación. Se usa zip.js con acceso aleatorio: listar lee solo el directorio central y cada entrada se descomprime bajo demanda.
+  * File System Access API con fallback a `<input type="file">`.
+* **Hito 2 — HECHO:** Decodificador de imágenes y render de un frame en Canvas 2D.
+  * La distinción prevista era `.SPR` contra `.ZAR`. Son **tres** formatos: también están los `.TIL`, que son el terreno isométrico y pesan más que todo lo demás junto (29.957 archivos).
+  * Ninguno está documentado públicamente; la disposición se dedujo por ingeniería inversa y quedó escrita en cada módulo.
+  * Un `.SPR` no contiene "frames comprimidos en formato ZAR" exactamente: contiene animaciones con nombre, cada una con cuatro paletas propias y sus imágenes, que son ZAR sin paleta. Algunas animaciones guardan ese bloque comprimido con zlib.
+* **Hito 3 — HECHO:** Servidor Node.js con Colyseus sincronizando un lobby de puntos en una grilla vacía entre dos navegadores.
+  * El servidor es la única autoridad sobre las posiciones, como pide el punto 2.
+  * El reloj de ronda y el temporizador del combate por turnos (punto 5.1) todavía no están: el lobby no los necesita.
+
+### 6.1 Pendientes conocidos
+* **Formatos:** falta saber para qué sirven las otras tres paletas de un `.SPR`, que son escalas de grises, y qué guarda su tabla de rectángulos, que probablemente lleve los offsets de dibujo de cada imagen. También falta recorrer los 154 `.TIL` que declaran más de un ZAR.
+* **Combate:** el reloj de ronda global y el temporizador por turno, que son comunes a las dos opciones evaluadas en el punto 5.1.
