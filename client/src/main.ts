@@ -1,7 +1,15 @@
 import { BosArchive, UnsupportedArchiveError, type BosEntry } from './bos/archive';
 import { pickBosFile, supportsFileSystemAccess } from './bos/filePicker';
 import { toHex } from './bos/signature';
-import { describeTile, describeZar, drawTileToCanvas, drawZarToCanvas } from './sprites/canvas';
+import {
+  describeSprite,
+  describeTile,
+  describeZar,
+  drawSpriteToCanvas,
+  drawTileToCanvas,
+  drawZarToCanvas,
+} from './sprites/canvas';
+import { isSprite } from './sprites/sprite';
 import { isTile } from './sprites/tile';
 import { isZar } from './sprites/zar';
 
@@ -184,9 +192,10 @@ function hexDump(bytes: Uint8Array): string {
  * Dibuja la entrada en el canvas si es una imagen conocida. Devuelve la
  * descripción para el título, o null si hay que caer al texto o al hexadecimal.
  */
-function drawImage(bytes: Uint8Array): string | null {
+async function drawImage(bytes: Uint8Array): Promise<string | null> {
   if (isZar(bytes)) return describeZar(drawZarToCanvas(ui.previewCanvas, bytes));
   if (isTile(bytes)) return describeTile(drawTileToCanvas(ui.previewCanvas, bytes));
+  if (isSprite(bytes)) return describeSprite(await drawSpriteToCanvas(ui.previewCanvas, bytes));
   return null;
 }
 
@@ -198,7 +207,7 @@ async function previewEntry(entry: BosEntry): Promise<void> {
 
     let described: string | null = null;
     try {
-      described = drawImage(bytes);
+      described = await drawImage(bytes);
     } catch (err) {
       // Un archivo corrupto no debe romper la vista previa: se cae al hexadecimal.
       console.warn(`No se pudo decodificar ${entry.path} como imagen`, err);
