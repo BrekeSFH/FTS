@@ -20,12 +20,15 @@ export interface LobbyHandle {
   setFloor(floor: PlacedTile | null): void;
   /** Cambia el tile de pared del fondo. `null` lo saca. */
   setWall(wall: PlacedTile | null): void;
+  /** Cambia el sprite de los jugadores. `null` vuelve a los puntos. */
+  setCharacter(character: PlacedTile | null): void;
 }
 
 export function setupLobby(ui: LobbyElements): LobbyHandle {
   let room: LobbyRoom | null = null;
   let floor: PlacedTile | null = null;
   let wall: PlacedTile | null = null;
+  let character: PlacedTile | null = null;
 
   const setStatus = (message: string, isError = false): void => {
     ui.status.textContent = message;
@@ -37,7 +40,7 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     // puede no haber nada que dibujar todavía. El primer `onStateChange` lo
     // resuelve enseguida.
     if (!room?.state?.players) return;
-    renderLobby(ui.canvas, room.state, { ownSessionId: room.sessionId, floor, wall });
+    renderLobby(ui.canvas, room.state, { ownSessionId: room.sessionId, floor, wall, character });
   };
 
   const disconnect = (reason: string, isError = false): void => {
@@ -94,6 +97,10 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     },
     setWall(next) {
       wall = next;
+      draw();
+    },
+    setCharacter(next) {
+      character = next;
       draw();
     },
   };

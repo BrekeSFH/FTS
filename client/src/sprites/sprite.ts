@@ -18,8 +18,9 @@
  *   +16  uint32 + nombre         largo y nombre de la animación
  *   +N   uint32                  cantidad de direcciones
  *   +N+4 uint32                  frames por dirección
- *   +N+8 direcciones x frames    tabla de rectángulos, 16 bytes por imagen;
- *                                el siguiente encabezado arranca justo después
+ *   +N+8 direcciones x frames    tabla de rectángulos, 16 bytes por imagen:
+ *                                izquierda, arriba, derecha y abajo en uint32.
+ *                                El siguiente encabezado arranca justo después
  *
  * El bloque de datos empieza con el magic `<spranim_img>` y un byte de versión:
  *
@@ -33,10 +34,18 @@
  *   todo lo observado) seguido de count x (R, G, B, relleno); luego 9 bytes
  *   sin identificar y después los frames, separados por 12 bytes entre sí.
  *
+ * El rectángulo de cada imagen da su posición respecto del punto de apoyo que
+ * declara la cabecera del sprite, y eso es lo que permite plantar un personaje
+ * sobre una celda. Casi siempre da también su tamaño: sobre 6264 imágenes,
+ * 6016 coinciden exacto y las demás difieren en un píxel. En los sprites
+ * animados el rectángulo es bastante más grande que la imagen, probablemente
+ * porque conserva la caja original mientras el ZAR viene recortado a su
+ * contenido; eso no está confirmado.
+ *
  * Qué falta: para qué sirven las otras tres paletas. La primera es la de
  * color y las otras tres son escalas de grises; la hipótesis es recoloreo por
- * facción, pero no está verificada. Tampoco se interpretó la tabla de
- * rectángulos ni los 9 y 12 bytes entre frames.
+ * facción, pero no está verificada. Tampoco se identificaron los 9 y 12 bytes
+ * entre imágenes.
  */
 import { decodeZarRuns, type ZarImage } from './zar';
 
@@ -73,6 +82,14 @@ export class InvalidSpriteError extends Error {
   }
 }
 
+/** Rectángulo de una imagen dentro del espacio del sprite. */
+export interface SpriteRect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
 export interface SpriteAnimation {
   name: string;
   directions: number;
@@ -86,11 +103,29 @@ export interface SpriteAnimation {
   dataOffset: number;
   /** Dónde termina el bloque de esta animación: donde arranca el siguiente, o el fin del archivo. */
   dataEnd: number;
+  /** Una entrada por imagen declarada, en el mismo orden. */
+  rects: readonly SpriteRect[];
+}
+
+/**
+ * Punto de apoyo del sprite, en el mismo espacio que los rectángulos.
+ * Restarlo a la esquina del rectángulo da dónde dibujar la imagen respecto de
+ * la celda, igual que el ancla de un tile.
+ */
+export function readSpriteReference(bytes: Uint8Array): { x: number; y: number } {
+  if (!isSprite(bytes)) throw new InvalidSpriteError('El archivo no empieza con la firma <sprite>');
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return { x: view.getUint32(14, true), y: view.getUint32(18, true) };
 }
 
 export interface SpriteFrame extends ZarImage {
   animation: string;
   frameIndex: number;
+  /**
+   * Rectángulo declarado para esta imagen, o null si no lo trae. Algunas
+   * animaciones —casi todas overlays de efectos— lo dejan en ceros.
+   */
+  rect: SpriteRect | null;
 }
 
 function readAscii(bytes: Uint8Array, at: number, length: number): string {
@@ -145,6 +180,21 @@ export function readSpriteAnimations(bytes: Uint8Array): SpriteAnimation[] {
     const directions = view.getUint32(after, true);
     const framesPerDirection = view.getUint32(after + 4, true);
     const imageCount = directions * framesPerDirection;
+    const tableAt = after + 8;
+    if (tableAt + imageCount * FRAME_TABLE_STRIDE > bytes.length) {
+      throw new InvalidSpriteError(`La tabla de rectángulos de 0x${at.toString(16)} se sale del archivo`);
+    }
+    const rects: SpriteRect[] = [];
+    for (let i = 0; i < imageCount; i++) {
+      const base = tableAt + i * FRAME_TABLE_STRIDE;
+      rects.push({
+        left: view.getUint32(base, true),
+        top: view.getUint32(base + 4, true),
+        right: view.getUint32(base + 8, true),
+        bottom: view.getUint32(base + 12, true),
+      });
+    }
+
     animations.push({
       name: readAscii(bytes, nameAt, nameLength),
       directions,
@@ -152,6 +202,7 @@ export function readSpriteAnimations(bytes: Uint8Array): SpriteAnimation[] {
       imageCount,
       dataOffset,
       dataEnd: bytes.length,
+      rects,
     });
 
     at = after + 8 + imageCount * FRAME_TABLE_STRIDE;
@@ -285,6 +336,13 @@ export async function countSpriteImages(bytes: Uint8Array, animationIndex = 0): 
   return count;
 }
 
+/** Un rectángulo en ceros significa que la animación no lo declara. */
+function declaredRect(rect: SpriteRect | undefined): SpriteRect | null {
+  if (!rect) return null;
+  if (rect.left === 0 && rect.top === 0 && rect.right === 0 && rect.bottom === 0) return null;
+  return rect;
+}
+
 /** Frame sin datos de imagen; ver `findFrame`. */
 function emptyFrame(animation: string, frameIndex: number): SpriteFrame {
   return {
@@ -296,6 +354,7 @@ function emptyFrame(animation: string, frameIndex: number): SpriteFrame {
     declaredDataSize: 0,
     animation,
     frameIndex,
+    rect: null,
   };
 }
 
@@ -359,5 +418,11 @@ export async function decodeSpriteFrame(
   const data = payload.subarray(dataStart, dataStart + Math.min(declaredDataSize, available));
   const decoded = decodeZarRuns(data, width, height, payload, paletteAt);
 
-  return { ...decoded, declaredDataSize, animation: animation.name, frameIndex };
+  return {
+    ...decoded,
+    declaredDataSize,
+    animation: animation.name,
+    frameIndex,
+    rect: declaredRect(animation.rects[frameIndex]),
+  };
 }

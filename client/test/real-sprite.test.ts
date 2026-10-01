@@ -56,6 +56,22 @@ describe('sprites reales', () => {
                 `${entry.filename} [${anims[a].name}]: consumió ${frame.bytesConsumed} de ${frame.declaredDataSize} bytes`,
               );
             }
+            // El rectángulo tiene que contener a su imagen. Es lo que
+            // confirma que la tabla quedó alineada: desalineada daría valores
+            // disparatados. Se admite un píxel de margen porque unas pocas
+            // imágenes lo declaran justo al revés, y rectángulos más grandes
+            // porque en los sprites animados la imagen viene recortada a su
+            // contenido mientras el rectángulo conserva la caja original.
+            if (frame.rect && frame.width > 0) {
+              const rw = frame.rect.right - frame.rect.left;
+              const rh = frame.rect.bottom - frame.rect.top;
+              if (rw < frame.width - 1 || rh < frame.height - 1) {
+                problems.push(
+                  `${entry.filename} [${anims[a].name}]: rect de ${rw}×${rh}` +
+                    ` para una imagen de ${frame.width}×${frame.height}`,
+                );
+              }
+            }
           }
         } catch (err) {
           problems.push(`${entry.filename}: ${(err as Error).message}`);

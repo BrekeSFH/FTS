@@ -13,6 +13,7 @@ import { isSprite } from './sprites/sprite';
 import { isTile } from './sprites/tile';
 import { isZar } from './sprites/zar';
 import { setupLobby } from './lobby/ui';
+import { clearSpriteCache, loadSpriteImage } from './iso/spriteset';
 import { FLOOR_TILE_HEIGHT, FLOOR_TILE_WIDTH, clearTileCache, loadTile } from './iso/tileset';
 
 /** Límite de filas renderizadas; los .BOS pueden tener miles de entradas. */
@@ -85,8 +86,10 @@ async function openArchive(): Promise<void> {
     current = null;
     // Los tiles cacheados son del archivo anterior.
     clearTileCache();
+    clearSpriteCache();
     lobby.setFloor(null);
     lobby.setWall(null);
+    lobby.setCharacter(null);
     current = await BosArchive.open(file);
     renderArchive(current);
     setStatus('');
@@ -163,6 +166,14 @@ function renderEntries(): void {
       view.addEventListener('click', () => void previewEntry(entry));
       save.addEventListener('click', () => void downloadEntry(entry));
       actions.append(view, ' ', save);
+
+      // Un sprite puede usarse de personaje en el lobby.
+      if (entry.extension === 'spr') {
+        const character = el('button', 'Personaje', 'small');
+        character.type = 'button';
+        character.addEventListener('click', () => void useAsCharacter(entry));
+        actions.append(' ', character);
+      }
 
       // Un tile puede probarse en el lobby sin salir del explorador.
       if (entry.extension === 'til') {
@@ -273,6 +284,23 @@ async function useAsTile(entry: BosEntry, role: 'floor' | 'wall'): Promise<void>
   } catch (err) {
     console.error(err);
     setStatus(`No se pudo usar ${entry.path} como ${etiqueta}: ${(err as Error).message}`, true);
+  }
+}
+
+/** Usa la primera imagen de un `.SPR` como sprite de los jugadores. */
+async function useAsCharacter(entry: BosEntry): Promise<void> {
+  if (!current) return;
+  setStatus(`Cargando ${entry.path} como personaje…`);
+  try {
+    const sprite = await loadSpriteImage(entry.path, await current.readBytes(entry.path));
+    lobby.setCharacter({ bitmap: sprite.bitmap, anchorX: sprite.anchorX, anchorY: sprite.anchorY });
+    setStatus(
+      `Personaje del lobby: ${entry.path} — "${sprite.animation}"` +
+        ` (${sprite.width}×${sprite.height}, ancla ${sprite.anchorX},${sprite.anchorY}).`,
+    );
+  } catch (err) {
+    console.error(err);
+    setStatus(`No se pudo usar ${entry.path} como personaje: ${(err as Error).message}`, true);
   }
 }
 
