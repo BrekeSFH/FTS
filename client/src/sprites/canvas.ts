@@ -5,6 +5,7 @@
  * jsdom no implementa canvas, así que esta parte no entra en los tests
  * unitarios.
  */
+import { decodeSpriteFrame, readSpriteAnimations, type SpriteAnimation, type SpriteFrame } from './sprite';
 import { decodeTile, type TileImage } from './tile';
 import { decodeZar, type ZarImage } from './zar';
 
@@ -54,4 +55,30 @@ export function describeZar(image: ZarImage): string {
 export function describeTile(tile: TileImage): string {
   const extra = tile.zarCount > 1 ? ` — ${tile.zarCount} ZAR, se muestra el primero` : '';
   return `TIL ${tile.width}×${tile.height}${extra}`;
+}
+
+export interface DrawnSprite {
+  frame: SpriteFrame;
+  animations: SpriteAnimation[];
+}
+
+/** Decodifica un frame de un `.SPR` y lo dibuja. Asíncrono: puede venir comprimido. */
+export async function drawSpriteToCanvas(
+  canvas: HTMLCanvasElement,
+  bytes: Uint8Array,
+  animationIndex = 0,
+  frameIndex = 0,
+): Promise<DrawnSprite> {
+  const animations = readSpriteAnimations(bytes);
+  const frame = await decodeSpriteFrame(bytes, animationIndex, frameIndex);
+  paint(canvas, frame);
+  return { frame, animations };
+}
+
+export function describeSprite({ frame, animations }: DrawnSprite): string {
+  const animation = animations[0];
+  const cuantas = animations.length > 1 ? ` de ${animations.length} animaciones` : '';
+  const cuantos = animation.imageCount > 1 ? `, imagen 1 de ${animation.imageCount}` : '';
+  if (frame.width === 0) return `SPR "${frame.animation}" sin datos de imagen${cuantas}`;
+  return `SPR ${frame.width}×${frame.height} — "${frame.animation}"${cuantas}${cuantos}`;
 }

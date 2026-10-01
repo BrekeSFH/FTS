@@ -152,6 +152,25 @@ export function decodeZar(bytes: Uint8Array): ZarImage {
   const dataStart = sizeAt + 4;
   const available = Math.max(0, bytes.length - dataStart);
   const data = bytes.subarray(dataStart, dataStart + Math.min(declaredDataSize, available));
+
+  return { ...decodeZarRuns(data, width, height, bytes, PALETTE_OFFSET), declaredDataSize };
+}
+
+/**
+ * Decodifica los runs a pixeles RGBA.
+ *
+ * La paleta se pasa aparte porque no siempre vive junto a los datos: los ZAR
+ * sueltos la traen en su propia cabecera, y los frames de un `.SPR` la
+ * comparten a nivel de animacion.
+ */
+export function decodeZarRuns(
+  data: Uint8Array,
+  width: number,
+  height: number,
+  palette: Uint8Array,
+  paletteOffset: number,
+): Omit<ZarImage, 'declaredDataSize'> {
+  const total = width * height;
   const pixels = new Uint8ClampedArray(total * 4);
 
   let read = 0;
@@ -162,8 +181,8 @@ export function decodeZar(bytes: Uint8Array): ZarImage {
     const type = control & 3;
 
     if (type === 0) {
-      // Transparentes: el búfer ya viene en cero. El último run suele pasarse
-      // del final de la imagen, así que se acota.
+      // Transparentes: el bufer ya viene en cero. El ultimo run suele pasarse
+      // del final de la imagen, asi que se acota.
       pixel = Math.min(pixel + count, total);
       continue;
     }
@@ -186,17 +205,17 @@ export function decodeZar(bytes: Uint8Array): ZarImage {
         alpha = data[read++];
       }
 
-      const palette = PALETTE_OFFSET + color * 4;
+      const entry = paletteOffset + color * 4;
       const out = pixel * 4;
-      pixels[out] = bytes[palette];
-      pixels[out + 1] = bytes[palette + 1];
-      pixels[out + 2] = bytes[palette + 2];
+      pixels[out] = palette[entry];
+      pixels[out + 1] = palette[entry + 1];
+      pixels[out + 2] = palette[entry + 2];
       pixels[out + 3] = alpha;
       pixel++;
     }
   }
 
-  return { width, height, pixels, pixelsWritten: pixel, bytesConsumed: read, declaredDataSize };
+  return { width, height, pixels, pixelsWritten: pixel, bytesConsumed: read };
 }
 
 /** Lee la paleta cruda como RGB. Útil para inspeccionar y para los tests. */
