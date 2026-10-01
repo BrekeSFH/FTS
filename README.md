@@ -18,7 +18,7 @@ Extraction RPG isométrico multijugador (PvE / PvPvE) que corre en el navegador,
 
 - [x] **Hito 1:** Lector de archivos `.BOS` en el navegador (verificar firma ZIP, listar entradas, descompresión bajo demanda).
 - [x] **Hito 2:** Decodificador de sprites (`.SPR` / `.ZAR` / `.TIL`) y render de un frame en Canvas 2D.
-- [ ] **Hito 3:** Servidor Colyseus con lobby básico sincronizado entre dos navegadores.
+- [x] **Hito 3:** Servidor Colyseus con lobby básico sincronizado entre dos navegadores.
 
 ## Cliente: explorador BOS (Hito 1)
 
@@ -62,6 +62,31 @@ El RLE es común a los tres. Cada byte de control codifica una cantidad en sus 6
 - `client/src/sprites/canvas.ts`: puente entre los decodificadores y el `<canvas>`.
 
 Los tests de integración recorren la instalación entera: los 839 `.ZAR` de `gui_0.bos`, los 29.957 `.TIL` de `tiles_0.bos` y 1592 animaciones de sprites. Cada imagen tiene que llenar su alto por ancho **y** consumir exactamente los bytes que declara; lo segundo es lo que detecta un offset corrido, que de otro modo también llena la imagen pero la dibuja desplazada.
+
+## Servidor: lobby (Hito 3)
+
+```bash
+cd server
+npm install
+npm start        # ws://localhost:2567
+npm test         # tests contra un servidor Colyseus real
+npm run typecheck
+```
+
+Con el servidor levantado y el cliente en `npm run dev`, abrí http://localhost:5173 en dos pestañas, puse un nombre y conectá. Flechas o WASD para moverte; Q, E, Z y C para las diagonales.
+
+El GDD exige autoridad del servidor en todos los modos, así que **el cliente no mueve a nadie**: manda la intención de dar un paso y el servidor decide. Valida que sea un paso de una celda en alguna de las ocho direcciones, que caiga dentro de la grilla y que el destino esté libre. Lo que se dibuja sale siempre del estado sincronizado, nunca de una predicción local.
+
+La grilla del lobby es cuadrada y no isométrica a propósito: este hito prueba la sincronización, y mezclarla con la proyección isométrica solo agregaría una fuente de error a lo que se está midiendo.
+
+Código relevante:
+
+- `server/src/rooms/state.ts`: el esquema que se sincroniza.
+- `server/src/rooms/LobbyRoom.ts`: la sala y las reglas de movimiento.
+- `server/src/createServer.ts`: depende de `@colyseus/core` y `@colyseus/ws-transport` en vez del paquete paraguas `colyseus`, que para un servidor headless sobra y arrastra monitor y playground.
+- `client/src/lobby/`: conexión, dibujo de la grilla y cableado de la interfaz.
+
+El endpoint por defecto es el mismo host de la página en el puerto 2567; se puede apuntar a otra máquina con `VITE_LOBBY_ENDPOINT`.
 
 ## Aviso legal
 
