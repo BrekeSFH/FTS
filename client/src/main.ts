@@ -1,7 +1,8 @@
 import { BosArchive, UnsupportedArchiveError, type BosEntry } from './bos/archive';
 import { pickBosFile, supportsFileSystemAccess } from './bos/filePicker';
 import { toHex } from './bos/signature';
-import { decodeZar, isZar } from './sprites/zar';
+import { describeZar, drawZarToCanvas } from './sprites/canvas';
+import { isZar } from './sprites/zar';
 
 /** Límite de filas renderizadas; los .BOS pueden tener miles de entradas. */
 const MAX_ROWS = 500;
@@ -184,17 +185,7 @@ function hexDump(bytes: Uint8Array): string {
  */
 function drawZar(bytes: Uint8Array): string | null {
   if (!isZar(bytes)) return null;
-  const image = decodeZar(bytes);
-  const context = ui.previewCanvas.getContext('2d');
-  if (!context) return null;
-
-  ui.previewCanvas.width = image.width;
-  ui.previewCanvas.height = image.height;
-  context.putImageData(new ImageData(image.pixels, image.width, image.height), 0, 0);
-
-  const expected = image.width * image.height;
-  const partial = image.pixelsWritten < expected ? ` — truncado: ${image.pixelsWritten} de ${expected} píxeles` : '';
-  return `ZAR ${image.width}×${image.height}${partial}`;
+  return describeZar(drawZarToCanvas(ui.previewCanvas, bytes));
 }
 
 async function previewEntry(entry: BosEntry): Promise<void> {
