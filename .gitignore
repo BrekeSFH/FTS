@@ -1,0 +1,15 @@
+node_modules/
+dist/
+build/
+.env
+.env.*
+*.log
+.DS_Store
+
+# Assets del juego original: nunca se versionan
+*.bos
+*.BOS
+*.spr
+*.SPR
+*.zar
+*.ZAR
