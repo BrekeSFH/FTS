@@ -4,6 +4,7 @@ import {
   decodeSpriteFrame,
   isSprite,
   readSpriteAnimations,
+  readSpriteReference,
 } from '../src/sprites/sprite';
 
 type Rgb = [number, number, number];
@@ -28,8 +29,12 @@ function palettes(groups: Rgb[][]): number[] {
   return groups.flatMap((colors) => [...u32(colors.length), ...colors.flatMap(([r, g, b]) => [r, g, b, 0xff])]);
 }
 
+/** Un rectángulo de la tabla: izquierda, arriba, derecha, abajo. */
+type Rect = [number, number, number, number];
+
 interface AnimSpec {
   name: string;
+  rects?: Rect[];
   directions?: number;
   /** Bytes de hueco antes de cada frame; el formato real usa 9, 10 o 12. */
   gaps?: number[];
@@ -44,7 +49,10 @@ async function deflate(data: Uint8Array): Promise<Uint8Array> {
 }
 
 /** Arma un `.SPR` con la disposición que documenta `sprite.ts`. */
-async function makeSprite(specs: AnimSpec[], { headerPadding = 0 } = {}): Promise<Uint8Array> {
+async function makeSprite(
+  specs: AnimSpec[],
+  { headerPadding = 0, reference = [0, 0] as [number, number] } = {},
+): Promise<Uint8Array> {
   const payloads = specs.map((spec) => {
     const gaps = spec.gaps ?? spec.frames.map(() => 9);
     return [
@@ -62,14 +70,21 @@ async function makeSprite(specs: AnimSpec[], { headerPadding = 0 } = {}): Promis
     }),
   );
 
-  const head = [...ascii('<sprite>'), 0x00, 0x34, 0x00, ...new Array(headerPadding).fill(0x00)];
+  // Tras el magic: 00, versión '4', 00, tres bytes, y el punto de referencia.
+  const head = [
+    ...ascii('<sprite>'), 0x00, 0x34, 0x00, 0x01, 0x01, 0x01,
+    ...u32(reference[0]), ...u32(reference[1]),
+    ...new Array(headerPadding).fill(0x00),
+  ];
   const headers = specs.map((spec) => [
     ...ascii('<spranim>'), 0x00, 0x31, 0x00,
     ...u32(0), // offset, se completa abajo
     ...u32(spec.name.length), ...ascii(spec.name),
     ...u32(spec.directions ?? 1),
     ...u32(spec.frames.length / (spec.directions ?? 1)),
-    ...new Array(spec.frames.length * 16).fill(0x00),
+    ...(spec.rects
+      ? spec.rects.flatMap((r) => r.flatMap(u32))
+      : new Array(spec.frames.length * 16).fill(0x00)),
   ]);
 
   // Los offsets se miden desde 0x0C y apuntan al ">" que cierra el magic.
@@ -180,5 +195,51 @@ describe('decodeSpriteFrame', () => {
     const spr = await makeSprite([{ name: 'a', frames: [frame(1, 1, [run(1, 1), 0])], palettes: FOUR }]);
     await expect(decodeSpriteFrame(spr, 5)).rejects.toThrow(/animación 5/);
     await expect(decodeSpriteFrame(spr, 0, 3)).rejects.toThrow(/declara 1 imágenes/);
+  });
+});
+
+describe('tabla de rectángulos', () => {
+  it('lee el punto de referencia del sprite', async () => {
+    const spr = await makeSprite([{ name: 'a', frames: [frame(1, 1, [run(1, 1), 0])], palettes: FOUR }], {
+      reference: [149, 197],
+    });
+    expect(readSpriteReference(spr)).toEqual({ x: 149, y: 197 });
+  });
+
+  it('expone un rectángulo por imagen, en orden', async () => {
+    const rects: Rect[] = [
+      [142, 180, 156, 196],
+      [140, 180, 156, 194],
+    ];
+    const spr = await makeSprite([
+      {
+        name: 'a',
+        rects,
+        frames: [frame(14, 16, [run(14 * 16, 0)]), frame(16, 14, [run(16 * 14, 0)])],
+        palettes: FOUR,
+      },
+    ]);
+    expect(readSpriteAnimations(spr)[0].rects).toEqual([
+      { left: 142, top: 180, right: 156, bottom: 196 },
+      { left: 140, top: 180, right: 156, bottom: 194 },
+    ]);
+  });
+
+  it('el rectángulo describe el tamaño de su imagen', async () => {
+    // Es la invariante que confirma que la tabla quedó alineada: sobre los
+    // archivos reales se cumple en 6016 de 6264 imágenes, y las demás
+    // difieren en un píxel.
+    const spr = await makeSprite([
+      {
+        name: 'a',
+        rects: [[142, 180, 156, 196]],
+        frames: [frame(14, 16, [run(14 * 16, 0)])],
+        palettes: FOUR,
+      },
+    ]);
+    const f = await decodeSpriteFrame(spr);
+    expect(f.rect).not.toBeNull();
+    expect(f.rect!.right - f.rect!.left).toBe(f.width);
+    expect(f.rect!.bottom - f.rect!.top).toBe(f.height);
   });
 });

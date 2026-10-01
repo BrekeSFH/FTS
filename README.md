@@ -83,14 +83,17 @@ Cada tile declara en su cabecera un **ancla**: el punto de la imagen que se apoy
 
 Todo se dibuja en un solo recorrido de atrás hacia adelante, con los jugadores intercalados por celda y no en una pasada aparte: uno parado detrás de una pared tiene que quedar tapado por ella.
 
-Sin un `.BOS` abierto el piso se dibuja como rombos de alambre, que ya muestran la proyección real. Con uno abierto, los botones **Piso** y **Pared** de cada entrada `.til` la usan de suelo o de muro del fondo: el tile se decodifica una vez, se cachea como `ImageBitmap` y se repite por toda la grilla. Cachearlo en IndexedDB, como sugiere el GDD, es un paso que todavía no hizo falta.
+Los `.SPR` traen el mismo mecanismo pero repartido en dos lugares: la cabecera del sprite declara el punto de apoyo, y cada imagen declara su rectángulo dentro del espacio del sprite. El ancla de una imagen es la resta de los dos. Sus imágenes van agrupadas por dirección, así que el índice es `dirección × frames + frame`.
+
+Sin un `.BOS` abierto el piso se dibuja como rombos de alambre, que ya muestran la proyección real. Con uno abierto, los botones **Piso** y **Pared** de cada entrada `.til` la usan de suelo o de muro del fondo, y **Personaje** de cada `.spr` reemplaza los puntos de los jugadores por el sprite del juego: el tile se decodifica una vez, se cachea como `ImageBitmap` y se repite por toda la grilla. Cachearlo en IndexedDB, como sugiere el GDD, es un paso que todavía no hizo falta.
 
 Código relevante:
 
 - `server/src/rooms/state.ts`: el esquema que se sincroniza.
 - `server/src/rooms/LobbyRoom.ts`: la sala y las reglas de movimiento.
 - `client/src/iso/projection.ts`: la proyección y el orden de dibujado.
-- `client/src/iso/tileset.ts`: decodificación y caché de los tiles de piso.
+- `client/src/iso/tileset.ts`: decodificación y caché de los tiles.
+- `client/src/iso/spriteset.ts`: lo mismo para los sprites, con el ancla sacada del rectángulo.
 - `server/src/createServer.ts`: depende de `@colyseus/core` y `@colyseus/ws-transport` en vez del paquete paraguas `colyseus`, que para un servidor headless sobra y arrastra monitor y playground.
 - `client/src/lobby/`: conexión, dibujo de la grilla y cableado de la interfaz.
 

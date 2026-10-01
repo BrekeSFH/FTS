@@ -42,6 +42,8 @@ export interface RenderOptions {
    * donde van las paredes de una sala vista en isométrica.
    */
   wallAt?: (gx: number, gy: number) => boolean;
+  /** Sprite con el que se dibuja a cada jugador. Sin esto se dibuja un punto. */
+  character?: PlacedTile | null;
 }
 
 const BACK_EDGES = (gx: number, gy: number): boolean => gx === 0 || gy === 0;
@@ -74,8 +76,31 @@ function drawPlayer(
   context: CanvasRenderingContext2D,
   player: LobbyPlayer,
   own: boolean,
+  character: PlacedTile | null,
 ): void {
   const { x, y } = cellCenter(player.x, player.y);
+
+  if (character) {
+    const pos = placeTile(player.x, player.y, character.anchorX, character.anchorY);
+    // El propio se marca con un anillo en el piso, porque todos los sprites
+    // son iguales mientras no haya uno por jugador.
+    if (own) {
+      context.beginPath();
+      context.ellipse(x, y, 14, 7, 0, 0, Math.PI * 2);
+      context.strokeStyle = '#ffffff';
+      context.lineWidth = 2;
+      context.stroke();
+    }
+    context.drawImage(character.bitmap, pos.x, pos.y);
+    context.fillStyle = own ? '#ffffff' : '#9fb4c7';
+    context.font = '11px system-ui, sans-serif';
+    context.textAlign = 'center';
+    context.strokeStyle = 'rgba(0, 0, 0, 0.8)';
+    context.lineWidth = 3;
+    context.strokeText(player.name, x, pos.y - 4);
+    context.fillText(player.name, x, pos.y - 4);
+    return;
+  }
 
   // Sombra elíptica para que el punto se apoye en el rombo y no flote.
   context.beginPath();
@@ -105,17 +130,16 @@ function drawPlayer(
 export function renderLobby(
   canvas: HTMLCanvasElement,
   state: LobbyState,
-  { ownSessionId, floor = null, wall = null, wallAt = BACK_EDGES }: RenderOptions,
+  { ownSessionId, floor = null, wall = null, wallAt = BACK_EDGES, character = null }: RenderOptions,
 ): void {
   const context = canvas.getContext('2d');
   if (!context) return;
 
   // Las paredes sobresalen bastante por arriba de su celda.
-  const salienteSuelo = overhang(floor);
-  const salientePared = overhang(wall);
+  const salientes = [floor, wall, character].map(overhang);
   const bounds = gridBounds(state.width, state.height, {
-    top: Math.max(salienteSuelo.top, salientePared.top),
-    left: Math.max(salienteSuelo.left, salientePared.left),
+    top: Math.max(...salientes.map((s) => s.top)),
+    left: Math.max(...salientes.map((s) => s.left)),
   });
 
   if (canvas.width !== bounds.width) canvas.width = bounds.width;
@@ -152,7 +176,7 @@ export function renderLobby(
     }
 
     for (const { player, sessionId } of porCelda.get(`${cell.x},${cell.y}`) ?? []) {
-      drawPlayer(context, player, sessionId === ownSessionId);
+      drawPlayer(context, player, sessionId === ownSessionId, character);
     }
   }
 }

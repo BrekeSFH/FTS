@@ -93,6 +93,6 @@ NO intentes programar toda la arquitectura del servidor, el cliente y la lógica
   * El reloj de ronda y el temporizador del combate por turnos (punto 5.1) todavía no están: el lobby no los necesita.
 
 ### 6.1 Pendientes conocidos
-* **Formatos:** falta saber para qué sirven las otras tres paletas de un `.SPR`, que son escalas de grises, y qué guarda su tabla de rectángulos. También falta recorrer los 154 `.TIL` que declaran más de un ZAR, que son los objetos animados: su cabecera declara la caja que contiene todos los frames, no la del primero.
+* **Formatos:** falta saber para qué sirven las otras tres paletas de un `.SPR`, que son escalas de grises. La tabla de rectángulos ya se interpreta: da la posición de cada imagen respecto del punto de apoyo del sprite, y con eso se plantan personajes sobre una celda. Falta recorrer los 154 `.TIL` que declaran más de un ZAR, que son los objetos animados: su cabecera declara la caja que contiene todos los frames, no la del primero.
 * **Render:** los `.TIL` ya exponen su ancla y con eso se plantan paredes sobre el mismo rombo que un piso. Falta el caso de los objetos que ocupan más de una celda, donde ordenar por `gx + gy` no alcanza.
 * **Combate:** el reloj de ronda global y el temporizador por turno, que son comunes a las dos opciones evaluadas en el punto 5.1.
