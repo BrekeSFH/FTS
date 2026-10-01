@@ -77,12 +77,16 @@ Con el servidor levantado y el cliente en `npm run dev`, abrí http://localhost:
 
 El GDD exige autoridad del servidor en todos los modos, así que **el cliente no mueve a nadie**: manda la intención de dar un paso y el servidor decide. Valida que sea un paso de una celda en alguna de las ocho direcciones, que caiga dentro de la grilla y que el destino esté libre. Lo que se dibuja sale siempre del estado sincronizado, nunca de una predicción local.
 
-La grilla del lobby es cuadrada y no isométrica a propósito: este hito prueba la sincronización, y mezclarla con la proyección isométrica solo agregaría una fuente de error a lo que se está midiendo.
+La grilla del lobby es isométrica, con la misma proyección que usa el juego. Las medidas no se supusieron: salieron de medir la silueta de los tiles de piso. En un tile de 73×37 el ápice cae en la columna 36 y cada fila crece 4 px, dos por lado, lo que describe un rombo de **72×36 de paso**; la imagen es un píxel más grande en cada eje para que los vecinos se solapen y no queden costuras.
+
+Sin un `.BOS` abierto el piso se dibuja como rombos de alambre, que ya muestran la proyección real. Con uno abierto, el botón **Piso** de cada entrada `.til` lo usa de suelo: el tile se decodifica una vez, se cachea como `ImageBitmap` y se repite por toda la grilla. Cachearlo en IndexedDB, como sugiere el GDD, es un paso que todavía no hizo falta.
 
 Código relevante:
 
 - `server/src/rooms/state.ts`: el esquema que se sincroniza.
 - `server/src/rooms/LobbyRoom.ts`: la sala y las reglas de movimiento.
+- `client/src/iso/projection.ts`: la proyección y el orden de dibujado.
+- `client/src/iso/tileset.ts`: decodificación y caché de los tiles de piso.
 - `server/src/createServer.ts`: depende de `@colyseus/core` y `@colyseus/ws-transport` en vez del paquete paraguas `colyseus`, que para un servidor headless sobra y arrastra monitor y playground.
 - `client/src/lobby/`: conexión, dibujo de la grilla y cableado de la interfaz.
 

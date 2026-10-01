@@ -15,8 +15,14 @@ export interface LobbyElements {
   canvas: HTMLCanvasElement;
 }
 
-export function setupLobby(ui: LobbyElements): void {
+export interface LobbyHandle {
+  /** Cambia el tile de piso. `null` vuelve a los rombos de alambre. */
+  setFloor(floor: ImageBitmap | null): void;
+}
+
+export function setupLobby(ui: LobbyElements): LobbyHandle {
   let room: LobbyRoom | null = null;
+  let floor: ImageBitmap | null = null;
 
   const setStatus = (message: string, isError = false): void => {
     ui.status.textContent = message;
@@ -28,7 +34,7 @@ export function setupLobby(ui: LobbyElements): void {
     // puede no haber nada que dibujar todavía. El primer `onStateChange` lo
     // resuelve enseguida.
     if (!room?.state?.players) return;
-    renderLobby(ui.canvas, room.state, { ownSessionId: room.sessionId });
+    renderLobby(ui.canvas, room.state, { ownSessionId: room.sessionId, floor });
   };
 
   const disconnect = (reason: string, isError = false): void => {
@@ -77,4 +83,11 @@ export function setupLobby(ui: LobbyElements): void {
     event.preventDefault();
     sendStep(room, step);
   });
+
+  return {
+    setFloor(next) {
+      floor = next;
+      draw();
+    },
+  };
 }
