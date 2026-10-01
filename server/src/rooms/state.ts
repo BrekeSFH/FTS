@@ -16,6 +16,8 @@ export const Player = schema(
     name: t.string(),
     /** Tono fijo por jugador, para distinguirlos en pantalla. */
     hue: t.uint16(),
+    /** Octante al que mira; ver `direction.ts`. */
+    facing: t.uint8(),
   },
   'Player',
 );

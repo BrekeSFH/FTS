@@ -85,6 +85,8 @@ Todo se dibuja en un solo recorrido de atrás hacia adelante, con los jugadores 
 
 Los `.SPR` traen el mismo mecanismo pero repartido en dos lugares: la cabecera del sprite declara el punto de apoyo, y cada imagen declara su rectángulo dentro del espacio del sprite. El ancla de una imagen es la resta de los dos. Sus imágenes van agrupadas por dirección, así que el índice es `dirección × frames + frame`.
 
+Las ocho direcciones son una brújula horaria que arranca en el norte de pantalla: la 0 es de espaldas, la 2 apunta a la derecha, la 4 mira de frente y la 6 a la izquierda. El orden salió de dibujarlas y mirarlas, no de suponerlo. El servidor calcula a cuál corresponde cada paso y la publica en el estado, así que el personaje gira al caminar.
+
 Sin un `.BOS` abierto el piso se dibuja como rombos de alambre, que ya muestran la proyección real. Con uno abierto, los botones **Piso** y **Pared** de cada entrada `.til` la usan de suelo o de muro del fondo, y **Personaje** de cada `.spr` reemplaza los puntos de los jugadores por el sprite del juego: el tile se decodifica una vez, se cachea como `ImageBitmap` y se repite por toda la grilla. Cachearlo en IndexedDB, como sugiere el GDD, es un paso que todavía no hizo falta.
 
 Código relevante:

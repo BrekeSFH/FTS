@@ -13,7 +13,7 @@ import { isSprite } from './sprites/sprite';
 import { isTile } from './sprites/tile';
 import { isZar } from './sprites/zar';
 import { setupLobby } from './lobby/ui';
-import { clearSpriteCache, loadSpriteImage } from './iso/spriteset';
+import { clearSpriteCache, loadSpriteDirections, pickDirectionalAnimation } from './iso/spriteset';
 import { FLOOR_TILE_HEIGHT, FLOOR_TILE_WIDTH, clearTileCache, loadTile } from './iso/tileset';
 
 /** Límite de filas renderizadas; los .BOS pueden tener miles de entradas. */
@@ -292,11 +292,17 @@ async function useAsCharacter(entry: BosEntry): Promise<void> {
   if (!current) return;
   setStatus(`Cargando ${entry.path} como personaje…`);
   try {
-    const sprite = await loadSpriteImage(entry.path, await current.readBytes(entry.path));
-    lobby.setCharacter({ bitmap: sprite.bitmap, anchorX: sprite.anchorX, anchorY: sprite.anchorY });
+    const bytes = await current.readBytes(entry.path);
+    // Se prefiere una animación con los ocho rumbos: así el personaje gira.
+    const direcciones = await loadSpriteDirections(entry.path, bytes, pickDirectionalAnimation(bytes));
+    lobby.setCharacter(
+      direcciones.map((d) => ({ bitmap: d.bitmap, anchorX: d.anchorX, anchorY: d.anchorY })),
+    );
+    const primera = direcciones[0];
     setStatus(
-      `Personaje del lobby: ${entry.path} — "${sprite.animation}"` +
-        ` (${sprite.width}×${sprite.height}, ancla ${sprite.anchorX},${sprite.anchorY}).`,
+      `Personaje del lobby: ${entry.path} — "${primera.animation}",` +
+        ` ${direcciones.length} ${direcciones.length === 1 ? 'dirección' : 'direcciones'}` +
+        ` (${primera.width}×${primera.height}).`,
     );
   } catch (err) {
     console.error(err);

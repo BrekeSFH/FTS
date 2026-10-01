@@ -7,6 +7,7 @@
  * mensaje se valida antes de tocar el estado.
  */
 import { Client, Room } from '@colyseus/core';
+import { DEFAULT_FACING, facingFromStep } from './direction';
 import { LobbyState, MapSchema, Player, type LobbyStateType } from './state';
 
 /** En Colyseus 0.18 el genérico de `Room` describe la sala, no solo el estado. */
@@ -78,6 +79,7 @@ export class LobbyRoom extends Room<LobbyRoomOptions> {
         name: sanitizeName(options.name, `Jugador ${this.state.players.size + 1}`),
         // Separa los tonos para que dos jugadores seguidos no se confundan.
         hue: (this.state.players.size * 67) % 360,
+        facing: DEFAULT_FACING,
       }),
     );
   }
@@ -93,6 +95,11 @@ export class LobbyRoom extends Room<LobbyRoomOptions> {
 
     const { dx, dy } = message;
     if (!isSingleStep(dx, dy)) return false;
+
+    // Girar es gratis aunque el paso no se pueda dar: alguien que empuja
+    // contra una pared igual queda mirando para ese lado.
+    const facing = facingFromStep(dx, dy);
+    if (facing !== null) player.facing = facing;
 
     const x = player.x + dx;
     const y = player.y + dy;

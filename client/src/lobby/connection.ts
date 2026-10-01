@@ -15,6 +15,8 @@ export interface LobbyPlayer {
   y: number;
   name: string;
   hue: number;
+  /** Octante al que mira, 0 a 7. Lo decide el servidor al moverse. */
+  facing: number;
 }
 
 /**

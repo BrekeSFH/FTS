@@ -6,6 +6,9 @@
  */
 import { decodeSpriteFrame, readSpriteAnimations, readSpriteReference } from '../sprites/sprite';
 
+/** Octantes que entiende el servidor. Algunas animaciones declaran más. */
+export const DIRECTIONS = 8;
+
 export interface LoadedSprite {
   bitmap: ImageBitmap;
   width: number;
@@ -63,9 +66,58 @@ export async function loadSpriteImage(
   return loaded;
 }
 
+/**
+ * Carga una imagen por dirección de una animación, en el orden que usa el
+ * servidor para el campo `facing`.
+ *
+ * Se toman como mucho ocho: hay animaciones que declaran nueve, y la novena
+ * no es un rumbo más. Si declara menos de ocho, o alguna no tiene imagen, se
+ * devuelven las que haya y quien dibuja cae a la primera.
+ */
+export async function loadSpriteDirections(
+  key: string,
+  bytes: Uint8Array,
+  animationIndex = 0,
+  frame = 0,
+): Promise<LoadedSprite[]> {
+  const animation = readSpriteAnimations(bytes)[animationIndex];
+  if (!animation) throw new Error(`No existe la animación ${animationIndex}`);
+
+  const out: LoadedSprite[] = [];
+  const total = Math.min(animation.directions, DIRECTIONS);
+  for (let direction = 0; direction < total; direction++) {
+    const index = direction * animation.framesPerDirection + frame;
+    if (index >= animation.imageCount) break;
+    try {
+      out.push(await loadSpriteImage(key, bytes, animationIndex, index));
+    } catch {
+      // Una dirección sin imagen no debería tirar abajo a las demás.
+      break;
+    }
+  }
+  if (out.length === 0) throw new Error(`"${animation.name}" no tiene ninguna imagen utilizable`);
+  return out;
+}
+
 /** Nombres de las animaciones, para elegir cuál mostrar. */
 export function spriteAnimationNames(bytes: Uint8Array): string[] {
   return readSpriteAnimations(bytes).map((a) => a.name);
+}
+
+/**
+ * Animación con la que mostrar al personaje girando.
+ *
+ * Se prefiere una que declare exactamente ocho direcciones: el orden de los
+ * rumbos se verificó sobre una de esas, y las que declaran nueve podrían usar
+ * otro. Si no hay ninguna se cae a cualquiera que cubra los ocho, y si
+ * tampoco, a la primera.
+ */
+export function pickDirectionalAnimation(bytes: Uint8Array): number {
+  const animations = readSpriteAnimations(bytes);
+  const exacta = animations.findIndex((a) => a.directions === DIRECTIONS);
+  if (exacta >= 0) return exacta;
+  const alguna = animations.findIndex((a) => a.directions >= DIRECTIONS);
+  return alguna >= 0 ? alguna : 0;
 }
 
 export function clearSpriteCache(): void {
