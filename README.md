@@ -16,9 +16,27 @@ Extraction RPG isométrico multijugador (PvE / PvPvE) que corre en el navegador,
 
 ## Hitos
 
-- [ ] **Hito 1:** Lector de archivos `.BOS` en el navegador (verificar firma ZIP, listar entradas, descompresión bajo demanda).
+- [x] **Hito 1:** Lector de archivos `.BOS` en el navegador (verificar firma ZIP, listar entradas, descompresión bajo demanda).
 - [ ] **Hito 2:** Decodificador de sprites (`.SPR` / `.ZAR`) y render de un frame en Canvas 2D.
 - [ ] **Hito 3:** Servidor Colyseus con lobby básico sincronizado entre dos navegadores.
+
+## Cliente: explorador BOS (Hito 1)
+
+```bash
+cd client
+npm install
+npm run dev      # abre http://localhost:5173
+npm test         # tests unitarios (vitest)
+npm run build    # typecheck + build de producción
+```
+
+Abrí un `.BOS` de tu instalación. El cliente verifica la firma ZIP (`PK\x03\x04`, o el EOCD si el ZIP tiene datos antepuestos), lista las entradas leyendo solo el directorio central y descomprime cada entrada bajo demanda (vista previa o descarga). Si el archivo no es ZIP, muestra los primeros bytes en hexadecimal para diagnosticar el formato.
+
+Código relevante:
+
+- `client/src/bos/signature.ts`: detección del formato.
+- `client/src/bos/archive.ts`: `BosArchive`, lectura con acceso aleatorio sobre [zip.js](https://gildas-lormeau.github.io/zip.js/).
+- `client/src/bos/filePicker.ts`: File System Access API con fallback a `<input type="file">`.
 
 ## Aviso legal
 

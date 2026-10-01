@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FTS · Explorador BOS</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Explorador BOS</h1>
+      <p class="hint">
+        Elegí un archivo <code>.BOS</code> de tu instalación de Fallout Tactics. Se procesa
+        localmente en tu navegador; nada se sube a ningún servidor.
+      </p>
+      <div class="actions">
+        <button id="pick" type="button">Abrir archivo .BOS…</button>
+        <span id="api" class="muted"></span>
+      </div>
+    </header>
+
+    <main>
+      <p id="status" role="status"></p>
+
+      <section id="archive" hidden>
+        <dl id="summary"></dl>
+        <div id="extensions"></div>
+        <label class="filter">
+          Filtrar
+          <input id="filter" type="search" placeholder="ruta o extensión, ej. .spr" />
+        </label>
+        <p id="count" class="muted"></p>
+        <table>
+          <thead>
+            <tr>
+              <th>Ruta</th>
+              <th class="num">Tamaño</th>
+              <th class="num">Comprimido</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="entries"></tbody>
+        </table>
+      </section>
+
+      <section id="preview" hidden>
+        <h2 id="preview-title"></h2>
+        <pre id="preview-body"></pre>
+      </section>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
