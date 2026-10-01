@@ -30,6 +30,13 @@ npm test         # tests unitarios (vitest)
 npm run build    # typecheck + build de producción
 ```
 
+Para verificar contra una instalación real, apuntá `FT_CORE` a la carpeta `core` del juego;
+sin esa variable el test de integración se saltea:
+
+```bash
+FT_CORE="C:/Program Files (x86)/Steam/steamapps/common/Fallout Tactics/core" npm test
+```
+
 Abrí un `.BOS` de tu instalación. El cliente verifica la firma ZIP (`PK\x03\x04`, o el EOCD si el ZIP tiene datos antepuestos), lista las entradas leyendo solo el directorio central y descomprime cada entrada bajo demanda (vista previa o descarga). Si el archivo no es ZIP, muestra los primeros bytes en hexadecimal para diagnosticar el formato.
 
 Código relevante:
