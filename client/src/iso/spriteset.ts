@@ -4,7 +4,12 @@
  * Igual que con los tiles, la imagen se decodifica una vez y se cachea como
  * `ImageBitmap`: el lobby la vuelve a dibujar en cada cuadro.
  */
-import { decodeSpriteFrame, readSpriteAnimations, readSpriteReference } from '../sprites/sprite';
+import {
+  decodeSpriteAnimation,
+  decodeSpriteFrame,
+  readSpriteAnimations,
+  readSpriteReference,
+} from '../sprites/sprite';
 
 /** Octantes que entiende el servidor. Algunas animaciones declaran más. */
 export const DIRECTIONS = 8;
@@ -24,6 +29,7 @@ export interface LoadedSprite {
 }
 
 const cache = new Map<string, LoadedSprite>();
+const animationCache = new Map<string, LoadedAnimation>();
 
 /**
  * Decodifica una imagen de un `.SPR` y la deja lista para dibujar.
@@ -66,37 +72,66 @@ export async function loadSpriteImage(
   return loaded;
 }
 
+/** Una animación entera, lista para dibujar: `images[dirección][frame]`. */
+export interface LoadedAnimation {
+  name: string;
+  /** Imágenes por dirección. Puede haber menos direcciones de las declaradas. */
+  images: LoadedSprite[][];
+  framesPerDirection: number;
+}
+
 /**
- * Carga una imagen por dirección de una animación, en el orden que usa el
- * servidor para el campo `facing`.
+ * Carga todas las imágenes de una animación, indexadas por dirección y frame.
  *
- * Se toman como mucho ocho: hay animaciones que declaran nueve, y la novena
- * no es un rumbo más. Si declara menos de ocho, o alguna no tiene imagen, se
- * devuelven las que haya y quien dibuja cae a la primera.
+ * Las direcciones van en el mismo orden que el campo `facing` del servidor.
+ * Se toman como mucho ocho; si alguna imagen falta, se corta ahí y quien
+ * dibuja cae a lo que haya.
  */
-export async function loadSpriteDirections(
+export async function loadSpriteAnimation(
   key: string,
   bytes: Uint8Array,
   animationIndex = 0,
-  frame = 0,
-): Promise<LoadedSprite[]> {
+): Promise<LoadedAnimation> {
   const animation = readSpriteAnimations(bytes)[animationIndex];
   if (!animation) throw new Error(`No existe la animación ${animationIndex}`);
 
-  const out: LoadedSprite[] = [];
+  const cacheKey = `${key}#anim${animationIndex}`;
+  const cached = animationCache.get(cacheKey);
+  if (cached) return cached;
+
+  const reference = readSpriteReference(bytes);
+  // De una sola pasada: pedir las imágenes por separado volvería a inflar el
+  // bloque comprimido una vez por cada una.
+  const frames = await decodeSpriteAnimation(bytes, animationIndex);
+
+  const images: LoadedSprite[][] = [];
   const total = Math.min(animation.directions, DIRECTIONS);
   for (let direction = 0; direction < total; direction++) {
-    const index = direction * animation.framesPerDirection + frame;
-    if (index >= animation.imageCount) break;
-    try {
-      out.push(await loadSpriteImage(key, bytes, animationIndex, index));
-    } catch {
-      // Una dirección sin imagen no debería tirar abajo a las demás.
-      break;
+    const porDireccion: LoadedSprite[] = [];
+    for (let frame = 0; frame < animation.framesPerDirection; frame++) {
+      const decoded = frames[direction * animation.framesPerDirection + frame];
+      if (!decoded || decoded.width === 0) break;
+      porDireccion.push({
+        bitmap: await createImageBitmap(new ImageData(decoded.pixels, decoded.width, decoded.height)),
+        width: decoded.width,
+        height: decoded.height,
+        anchorX: decoded.rect ? reference.x - decoded.rect.left : Math.floor(decoded.width / 2),
+        anchorY: decoded.rect ? reference.y - decoded.rect.top : decoded.height,
+        animation: decoded.animation,
+      });
     }
+    if (porDireccion.length === 0) break;
+    images.push(porDireccion);
   }
-  if (out.length === 0) throw new Error(`"${animation.name}" no tiene ninguna imagen utilizable`);
-  return out;
+  if (images.length === 0) throw new Error(`"${animation.name}" no tiene ninguna imagen utilizable`);
+
+  const loaded: LoadedAnimation = {
+    name: animation.name,
+    images,
+    framesPerDirection: images[0].length,
+  };
+  animationCache.set(cacheKey, loaded);
+  return loaded;
 }
 
 /** Nombres de las animaciones, para elegir cuál mostrar. */
@@ -105,22 +140,37 @@ export function spriteAnimationNames(bytes: Uint8Array): string[] {
 }
 
 /**
- * Animación con la que mostrar al personaje girando.
+ * Animación con la que mostrar al personaje moviéndose.
  *
- * Se prefiere una que declare exactamente ocho direcciones: el orden de los
- * rumbos se verificó sobre una de esas, y las que declaran nueve podrían usar
- * otro. Si no hay ninguna se cae a cualquiera que cubra los ocho, y si
- * tampoco, a la primera.
+ * Se busca primero un ciclo de desplazamiento —en estos sprites se llama
+ * "Run", no "Walk"— y se exige que cubra los ocho rumbos. Si no hay, cualquiera
+ * de ocho direcciones sirve para al menos girar.
  */
+/** Si el nombre de una animacion la delata como un ciclo de desplazamiento. */
+function esDesplazamiento(name: string): boolean {
+  // Se compara por palabra entera para no confundir "Run" con "Brunswick".
+  return name
+    .toLowerCase()
+    .split(/[^a-z]+/)
+    .some((palabra) => palabra === 'run' || palabra === 'walk');
+}
+
 export function pickDirectionalAnimation(bytes: Uint8Array): number {
   const animations = readSpriteAnimations(bytes);
-  const exacta = animations.findIndex((a) => a.directions === DIRECTIONS);
-  if (exacta >= 0) return exacta;
-  const alguna = animations.findIndex((a) => a.directions >= DIRECTIONS);
-  return alguna >= 0 ? alguna : 0;
+  const cubreLosOcho = (a: { directions: number }) => a.directions >= DIRECTIONS;
+  const caminando = animations.findIndex(
+    (a) => cubreLosOcho(a) && esDesplazamiento(a.name),
+  );
+  if (caminando >= 0) return caminando;
+  const cualquiera = animations.findIndex(cubreLosOcho);
+  return cualquiera >= 0 ? cualquiera : 0;
 }
 
 export function clearSpriteCache(): void {
   for (const sprite of cache.values()) sprite.bitmap.close();
   cache.clear();
+  for (const animation of animationCache.values()) {
+    for (const direccion of animation.images) for (const img of direccion) img.bitmap.close();
+  }
+  animationCache.clear();
 }

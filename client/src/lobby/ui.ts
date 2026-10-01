@@ -4,7 +4,8 @@
  * Vive aparte del explorador BOS porque son dos cosas independientes; que el
  * servidor esté caído no debe afectar al explorador, y viceversa.
  */
-import { connectToLobby, sendStep, stepForKey, type LobbyRoom } from './connection';
+import type { LoadedAnimation } from '../iso/spriteset';
+import { connectToLobby, sendStep, stepForKey, type LobbyPlayer, type LobbyRoom } from './connection';
 import { renderLobby, type PlacedTile } from './render';
 
 export interface LobbyElements {
@@ -20,15 +21,24 @@ export interface LobbyHandle {
   setFloor(floor: PlacedTile | null): void;
   /** Cambia el tile de pared del fondo. `null` lo saca. */
   setWall(wall: PlacedTile | null): void;
-  /** Cambia los sprites de los jugadores, uno por dirección. `null` vuelve a los puntos. */
-  setCharacter(character: readonly PlacedTile[] | null): void;
+  /** Cambia la animación de los jugadores. `null` vuelve a los puntos. */
+  setCharacter(character: LoadedAnimation | null): void;
 }
 
 export function setupLobby(ui: LobbyElements): LobbyHandle {
   let room: LobbyRoom | null = null;
   let floor: PlacedTile | null = null;
   let wall: PlacedTile | null = null;
-  let character: readonly PlacedTile[] | null = null;
+  let character: LoadedAnimation | null = null;
+
+  /**
+   * Cuándo arrancó el movimiento de cada jugador y dónde estaba.
+   *
+   * El estado sincronizado solo dice la celda; que alguien esté caminando se
+   * deduce de que esa celda haya cambiado hace poco. Alcanza para animar y no
+   * obliga al servidor a mandar nada más.
+   */
+  const movimiento = new Map<string, { x: number; y: number; desde: number }>();
 
   const setStatus = (message: string, isError = false): void => {
     ui.status.textContent = message;
@@ -40,7 +50,43 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     // puede no haber nada que dibujar todavía. El primer `onStateChange` lo
     // resuelve enseguida.
     if (!room?.state?.players) return;
-    renderLobby(ui.canvas, room.state, { ownSessionId: room.sessionId, floor, wall, character });
+    renderLobby(ui.canvas, room.state, {
+      ownSessionId: room.sessionId,
+      floor,
+      wall,
+      character: character ? spriteFor : null,
+    });
+  };
+
+  /** Cuánto se sigue animando después del último paso, en milisegundos. */
+  const VENTANA_MOVIMIENTO = 260;
+  /** Duración de cada frame de la animación. */
+  const MS_POR_FRAME = 90;
+
+  /** Elige el sprite de un jugador según hacia dónde mira y si viene caminando. */
+  const spriteFor = (player: LobbyPlayer, sessionId: string): PlacedTile | null => {
+    if (!character) return null;
+    const ahora = performance.now();
+    const previo = movimiento.get(sessionId);
+    if (!previo || previo.x !== player.x || previo.y !== player.y) {
+      // Si ya venía caminando se conserva el arranque, para que el ciclo no
+      // se reinicie en cada paso y la caminata se vea continua.
+      const seguia = previo !== undefined && ahora - previo.desde < VENTANA_MOVIMIENTO;
+      movimiento.set(sessionId, {
+        x: player.x,
+        y: player.y,
+        desde: seguia ? previo.desde : ahora,
+      });
+    }
+
+    const estado = movimiento.get(sessionId)!;
+    const caminando = ahora - estado.desde < VENTANA_MOVIMIENTO;
+    // Si la animación no cubre los ocho rumbos se cae al primero, que es
+    // preferible a mostrar una dirección equivocada.
+    const frames = character.images[player.facing] ?? character.images[0];
+    const frame = caminando ? Math.floor((ahora - estado.desde) / MS_POR_FRAME) % frames.length : 0;
+    const sprite = frames[frame] ?? frames[0];
+    return { bitmap: sprite.bitmap, anchorX: sprite.anchorX, anchorY: sprite.anchorY };
   };
 
   const disconnect = (reason: string, isError = false): void => {
@@ -69,6 +115,14 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
         setStatus(`Conectado como ${joined.sessionId}.`);
 
         joined.onStateChange(draw);
+        // Mientras alguien camina hay que redibujar aunque no llegue estado
+        // nuevo: el frame depende del reloj.
+        const animar = (): void => {
+          if (room !== joined) return;
+          if (character) draw();
+          requestAnimationFrame(animar);
+        };
+        requestAnimationFrame(animar);
         joined.onLeave((code) => {
           // El servidor cerró la sala o se cayó la conexión.
           if (room === joined) disconnect(`Conexión cerrada (código ${code}).`, code !== 1000);
@@ -101,6 +155,7 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     },
     setCharacter(next) {
       character = next;
+      movimiento.clear();
       draw();
     },
   };
