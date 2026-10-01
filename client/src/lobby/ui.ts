@@ -20,15 +20,15 @@ export interface LobbyHandle {
   setFloor(floor: PlacedTile | null): void;
   /** Cambia el tile de pared del fondo. `null` lo saca. */
   setWall(wall: PlacedTile | null): void;
-  /** Cambia el sprite de los jugadores. `null` vuelve a los puntos. */
-  setCharacter(character: PlacedTile | null): void;
+  /** Cambia los sprites de los jugadores, uno por dirección. `null` vuelve a los puntos. */
+  setCharacter(character: readonly PlacedTile[] | null): void;
 }
 
 export function setupLobby(ui: LobbyElements): LobbyHandle {
   let room: LobbyRoom | null = null;
   let floor: PlacedTile | null = null;
   let wall: PlacedTile | null = null;
-  let character: PlacedTile | null = null;
+  let character: readonly PlacedTile[] | null = null;
 
   const setStatus = (message: string, isError = false): void => {
     ui.status.textContent = message;

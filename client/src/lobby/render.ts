@@ -42,8 +42,11 @@ export interface RenderOptions {
    * donde van las paredes de una sala vista en isométrica.
    */
   wallAt?: (gx: number, gy: number) => boolean;
-  /** Sprite con el que se dibuja a cada jugador. Sin esto se dibuja un punto. */
-  character?: PlacedTile | null;
+  /**
+   * Sprites del jugador, uno por dirección y en el orden del campo `facing`.
+   * Si trae uno solo se usa para todas. Sin esto se dibuja un punto.
+   */
+  character?: readonly PlacedTile[] | null;
 }
 
 const BACK_EDGES = (gx: number, gy: number): boolean => gx === 0 || gy === 0;
@@ -76,12 +79,15 @@ function drawPlayer(
   context: CanvasRenderingContext2D,
   player: LobbyPlayer,
   own: boolean,
-  character: PlacedTile | null,
+  character: readonly PlacedTile[] | null,
 ): void {
   const { x, y } = cellCenter(player.x, player.y);
 
-  if (character) {
-    const pos = placeTile(player.x, player.y, character.anchorX, character.anchorY);
+  if (character && character.length > 0) {
+    // Si la animación no cubre los ocho rumbos se cae al primero, que es
+    // preferible a mostrar una dirección equivocada.
+    const sprite = character[player.facing] ?? character[0];
+    const pos = placeTile(player.x, player.y, sprite.anchorX, sprite.anchorY);
     // El propio se marca con un anillo en el piso, porque todos los sprites
     // son iguales mientras no haya uno por jugador.
     if (own) {
@@ -91,7 +97,7 @@ function drawPlayer(
       context.lineWidth = 2;
       context.stroke();
     }
-    context.drawImage(character.bitmap, pos.x, pos.y);
+    context.drawImage(sprite.bitmap, pos.x, pos.y);
     context.fillStyle = own ? '#ffffff' : '#9fb4c7';
     context.font = '11px system-ui, sans-serif';
     context.textAlign = 'center';
@@ -136,7 +142,9 @@ export function renderLobby(
   if (!context) return;
 
   // Las paredes sobresalen bastante por arriba de su celda.
-  const salientes = [floor, wall, character].map(overhang);
+  // De los sprites se toma el que más sobresale: todos ocupan lo mismo salvo
+  // por unos píxeles de diferencia entre direcciones.
+  const salientes = [floor, wall, ...(character ?? [])].map(overhang);
   const bounds = gridBounds(state.width, state.height, {
     top: Math.max(...salientes.map((s) => s.top)),
     left: Math.max(...salientes.map((s) => s.left)),
