@@ -171,3 +171,22 @@ pre {
   image-rendering: pixelated;
   max-width: 100%;
 }
+
+/* Barra de archivos .BOS abiertos. */
+#archives {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+
+#archives .archivo,
+#archives .activo {
+  display: inline-flex;
+  border: 1px solid var(--line);
+}
+
+#archives .activo {
+  border-color: currentColor;
+  font-weight: 600;
+}

@@ -26,6 +26,7 @@ const ui = {
   pick: $<HTMLButtonElement>('pick'),
   api: $('api'),
   status: $('status'),
+  archives: $('archives'),
   archive: $('archive'),
   summary: $('summary'),
   extensions: $('extensions'),
@@ -39,7 +40,16 @@ const ui = {
   previewCanvas: $<HTMLCanvasElement>('preview-canvas'),
 };
 
+/** Archivos abiertos. El explorador muestra uno por vez, pero todos siguen vivos. */
+const archives: BosArchive[] = [];
 let current: BosArchive | null = null;
+
+/** De qué archivo salió cada cosa que el lobby está usando. */
+const lobbySources: { floor: string | null; wall: string | null; character: string | null } = {
+  floor: null,
+  wall: null,
+  character: null,
+};
 
 ui.api.textContent = supportsFileSystemAccess()
   ? 'Usando File System Access API'
@@ -73,25 +83,32 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
+/**
+ * Prefijo con el que se cachea lo que sale de un archivo.
+ *
+ * Un mapa real va a mezclar tiles de un `.BOS` con personajes de otro, así
+ * que varios conviven abiertos y el caché tiene que poder vaciarse por
+ * archivo. Dos `.BOS` distintos pueden tener entradas con la misma ruta.
+ */
+const cacheKey = (archive: BosArchive, path: string): string => `${archive.name}#${path}`;
+
 async function openArchive(): Promise<void> {
   const file = await pickBosFile();
   if (!file) return;
 
   setStatus(`Leyendo ${file.name}…`);
-  ui.archive.hidden = true;
   ui.preview.hidden = true;
 
   try {
-    await current?.close();
-    current = null;
-    // Los tiles cacheados son del archivo anterior.
-    clearTileCache();
-    clearSpriteCache();
-    lobby.setFloor(null);
-    lobby.setWall(null);
-    lobby.setCharacter(null);
-    current = await BosArchive.open(file);
-    renderArchive(current);
+    // Volver a abrir el mismo archivo lo reemplaza en vez de duplicarlo.
+    const abierto = archives.find((a) => a.name === file.name);
+    if (abierto) await closeArchive(abierto);
+
+    const archive = await BosArchive.open(file);
+    archives.push(archive);
+    current = archive;
+    renderArchives();
+    renderArchive(archive);
     setStatus('');
   } catch (err) {
     console.error(err);
@@ -105,6 +122,61 @@ async function openArchive(): Promise<void> {
       setStatus(`No se pudo leer ${file.name}: ${(err as Error).message}`, true);
     }
   }
+}
+
+/**
+ * Cierra un archivo y suelta lo que dependía de él: sus bitmaps cacheados y,
+ * si el lobby estaba usando alguno, también eso.
+ */
+async function closeArchive(archive: BosArchive): Promise<void> {
+  const prefix = `${archive.name}#`;
+  clearTileCache(prefix);
+  clearSpriteCache(prefix);
+  if (lobbySources.floor === archive.name) {
+    lobby.setFloor(null);
+    lobbySources.floor = null;
+  }
+  if (lobbySources.wall === archive.name) {
+    lobby.setWall(null);
+    lobbySources.wall = null;
+  }
+  if (lobbySources.character === archive.name) {
+    lobby.setCharacter(null);
+    lobbySources.character = null;
+  }
+
+  archives.splice(archives.indexOf(archive), 1);
+  await archive.close();
+
+  if (current === archive) {
+    current = archives[archives.length - 1] ?? null;
+    if (current) renderArchive(current);
+    else ui.archive.hidden = true;
+  }
+  renderArchives();
+}
+
+/** Barra con los archivos abiertos: uno queda seleccionado y los demás a mano. */
+function renderArchives(): void {
+  ui.archives.hidden = archives.length === 0;
+  ui.archives.replaceChildren(
+    ...archives.map((archive) => {
+      const chip = el('span', undefined, archive === current ? 'archivo activo' : 'archivo');
+      const seleccionar = el('button', archive.name, 'small');
+      seleccionar.type = 'button';
+      seleccionar.addEventListener('click', () => {
+        current = archive;
+        renderArchives();
+        renderArchive(archive);
+      });
+      const cerrar = el('button', '×', 'small');
+      cerrar.type = 'button';
+      cerrar.title = `Cerrar ${archive.name}`;
+      cerrar.addEventListener('click', () => void closeArchive(archive));
+      chip.append(seleccionar, cerrar);
+      return chip;
+    }),
+  );
 }
 
 function renderArchive(archive: BosArchive): void {
@@ -268,10 +340,16 @@ async function useAsTile(entry: BosEntry, role: 'floor' | 'wall'): Promise<void>
   const etiqueta = role === 'floor' ? 'piso' : 'pared';
   setStatus(`Cargando ${entry.path} como ${etiqueta}…`);
   try {
-    const tile = await loadTile(entry.path, await current.readBytes(entry.path));
+    const archive = current;
+    const tile = await loadTile(cacheKey(archive, entry.path), await archive.readBytes(entry.path));
     const colocado = { bitmap: tile.bitmap, anchorX: tile.anchorX, anchorY: tile.anchorY };
-    if (role === 'floor') lobby.setFloor(colocado);
-    else lobby.setWall(colocado);
+    if (role === 'floor') {
+      lobby.setFloor(colocado);
+      lobbySources.floor = archive.name;
+    } else {
+      lobby.setWall(colocado);
+      lobbySources.wall = archive.name;
+    }
 
     // Solo el piso necesita encajar con el paso del rombo: una pared se apoya
     // por su ancla y puede medir cualquier cosa.
@@ -292,11 +370,17 @@ async function useAsCharacter(entry: BosEntry): Promise<void> {
   if (!current) return;
   setStatus(`Cargando ${entry.path} como personaje…`);
   try {
-    const bytes = await current.readBytes(entry.path);
+    const archive = current;
+    const bytes = await archive.readBytes(entry.path);
     // Se prefiere un ciclo de desplazamiento con los ocho rumbos: así el
     // personaje gira y camina.
-    const animacion = await loadSpriteAnimation(entry.path, bytes, pickDirectionalAnimation(bytes));
+    const animacion = await loadSpriteAnimation(
+      cacheKey(archive, entry.path),
+      bytes,
+      pickDirectionalAnimation(bytes),
+    );
     lobby.setCharacter(animacion);
+    lobbySources.character = archive.name;
     setStatus(
       `Personaje del lobby: ${entry.path} — "${animacion.name}",` +
         ` ${animacion.images.length} direcciones de ${animacion.framesPerDirection} frames.`,
