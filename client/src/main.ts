@@ -12,6 +12,7 @@ import {
 import { isSprite } from './sprites/sprite';
 import { isTile } from './sprites/tile';
 import { isZar } from './sprites/zar';
+import { setupLobby } from './lobby/ui';
 
 /** Límite de filas renderizadas; los .BOS pueden tener miles de entradas. */
 const MAX_ROWS = 500;
@@ -255,3 +256,11 @@ async function downloadEntry(entry: BosEntry): Promise<void> {
 
 ui.pick.addEventListener('click', () => void openArchive());
 ui.filter.addEventListener('input', renderEntries);
+
+setupLobby({
+  connect: $<HTMLButtonElement>('lobby-connect'),
+  name: $<HTMLInputElement>('lobby-name'),
+  status: $('lobby-status'),
+  board: $('lobby-board'),
+  canvas: $<HTMLCanvasElement>('lobby-canvas'),
+});

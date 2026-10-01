@@ -152,3 +152,22 @@ pre {
   background-size: 16px 16px;
   background-position: 0 0, 8px 8px;
 }
+
+/* Lobby multijugador. */
+#lobby {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+#lobby .actions label {
+  margin-right: 0.5rem;
+}
+
+#lobby-canvas {
+  display: block;
+  border: 1px solid var(--line);
+  /* La grilla es pixel art: al escalar no debe interpolarse. */
+  image-rendering: pixelated;
+  max-width: 100%;
+}
