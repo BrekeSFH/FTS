@@ -17,6 +17,8 @@ import { aplicarAssetsDePrueba } from './dev/assetsDePrueba';
 import { setupLobby } from './lobby/ui';
 import { clearSpriteCache, loadSpriteAnimation, pickDirectionalAnimation } from './iso/spriteset';
 import { FLOOR_TILE_HEIGHT, FLOOR_TILE_WIDTH, clearTileCache, loadTile } from './iso/tileset';
+import { drawWorldToCanvas } from './maps/render';
+import { isWorld, readWorld } from './maps/world';
 
 /** Límite de filas renderizadas; los .BOS pueden tener miles de entradas. */
 const MAX_ROWS = 500;
@@ -265,6 +267,14 @@ function renderEntries(): void {
         actions.append(' ', character);
       }
 
+      // Un mapa del juego se puede dibujar entero.
+      if (entry.extension === 'mis') {
+        const mapa = el('button', 'Dibujar mapa', 'small');
+        mapa.type = 'button';
+        mapa.addEventListener('click', () => void drawMission(entry));
+        actions.append(' ', mapa);
+      }
+
       // Un tile puede probarse en el lobby sin salir del explorador.
       if (entry.extension === 'til') {
         const floor = el('button', 'Piso', 'small');
@@ -349,6 +359,62 @@ async function previewEntry(entry: BosEntry): Promise<void> {
   } catch (err) {
     console.error(err);
     setStatus(`No se pudo descomprimir ${entry.path}: ${(err as Error).message}`, true);
+  }
+}
+
+/**
+ * Busca un `.til` en todos los archivos abiertos.
+ *
+ * Los mapas y los tiles viven en `.BOS` distintos —`mis-core_*` y
+ * `tiles_0`—, así que para dibujar un mapa hay que tener los dos abiertos. Se
+ * busca en todos en vez de pedir el correcto: el usuario no tiene por qué
+ * saber en cuál está cada tile.
+ */
+function normalizarRuta(path: string): string {
+  // Los `.mis` guardan las rutas con barras normales, pero no cuesta nada
+  // aceptar también las invertidas por si algún mod las escribe así.
+  return path.toLowerCase().split('\\').join('/');
+}
+
+async function findTileBytes(path: string): Promise<Uint8Array | null> {
+  const buscado = normalizarRuta(path);
+  for (const archive of archives) {
+    const entry = archive.files.find((e) => normalizarRuta(e.path) === buscado);
+    if (entry) return archive.readBytes(entry.path);
+  }
+  return null;
+}
+
+/** Dibuja un mapa `.mis` completo con los tiles de los archivos abiertos. */
+async function drawMission(entry: BosEntry): Promise<void> {
+  if (!current) return;
+  setStatus(`Leyendo ${entry.path}…`);
+  try {
+    const bytes = await current.readBytes(entry.path);
+    if (!isWorld(bytes)) throw new Error('No tiene firma <world>');
+    const world = await readWorld(bytes);
+
+    ui.previewImage.hidden = false;
+    ui.previewBody.hidden = true;
+    ui.preview.hidden = false;
+    ui.previewTitle.textContent = `${entry.path} — ${world.tiles.length} tiles, ${world.tilePaths.length} distintos`;
+    ui.preview.scrollIntoView({ behavior: 'smooth' });
+
+    const dibujado = await drawWorldToCanvas(ui.previewCanvas, world, findTileBytes, {
+      onProgress: (hechos, total) => setStatus(`Dibujando ${entry.path}… ${hechos}/${total}`),
+    });
+
+    const aviso =
+      dibujado.missing.length > 0
+        ? ` · faltan ${dibujado.missing.length} tiles (¿tenés abierto tiles_0.bos?)`
+        : '';
+    ui.previewTitle.textContent =
+      `${entry.path} — ${dibujado.columns}×${dibujado.rows} celdas, hasta la altura ${dibujado.maxLevel}, ` +
+      `${dibujado.drawn} tiles al ${Math.round(dibujado.scale * 100)}%${aviso}`;
+    setStatus('');
+  } catch (err) {
+    console.error(err);
+    setStatus(`No se pudo dibujar ${entry.path}: ${(err as Error).message}`, true);
   }
 }
 
