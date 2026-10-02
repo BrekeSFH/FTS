@@ -49,38 +49,49 @@ export async function aplicarAssetsDePrueba(lobby: LobbyHandle): Promise<AssetsA
 
   const aplicados: AssetsAplicados = {};
 
-  // Cada uno por separado: que falte el personaje no debería dejar sin piso.
-  try {
-    const tile = await loadTile('dev#piso', await bytesDe('piso.til'));
-    lobby.setFloor({ bitmap: tile.bitmap, anchorX: tile.anchorX, anchorY: tile.anchorY });
-    aplicados.piso = manifiesto['piso.til'];
-  } catch (err) {
-    console.warn('No se pudo aplicar el piso de prueba', err);
-  }
-
-  try {
-    const tile = await loadTile('dev#pared', await bytesDe('pared.til'));
-    const fallback: PlacedTile = { bitmap: tile.bitmap, anchorX: tile.anchorX, anchorY: tile.anchorY };
-
-    // Las orientaciones son opcionales: el script las extrae si existen, y
-    // sin ellas la pared se dibuja igual pero siempre para el mismo lado.
+  /** Carga las caras de un juego de tiles con un prefijo dado. */
+  async function caras(prefijo: string): Promise<WallSet | null> {
     const faces: Partial<Record<WallSuffix, PlacedTile>> = {};
     for (const suffix of WALL_SUFFIXES) {
-      const nombre = `pared_${suffix}.til`;
+      const nombre = `${prefijo}_${suffix}.til`;
       if (!(nombre in manifiesto)) continue;
       try {
-        const cara = await loadTile(`dev#${nombre}`, await bytesDe(nombre));
-        faces[suffix] = { bitmap: cara.bitmap, anchorX: cara.anchorX, anchorY: cara.anchorY };
+        const tile = await loadTile(`dev#${nombre}`, await bytesDe(nombre));
+        faces[suffix] = { bitmap: tile.bitmap, anchorX: tile.anchorX, anchorY: tile.anchorY };
       } catch (err) {
         console.warn(`No se pudo aplicar ${nombre}`, err);
       }
     }
+    // Sin ninguna cara no hay juego; con alguna, la primera hace de respaldo.
+    const alguna = Object.values(faces)[0];
+    return alguna ? { faces, fallback: alguna } : null;
+  }
 
-    const juego: WallSet = { faces, fallback };
-    lobby.setWall(juego);
-    aplicados.pared = manifiesto['pared.til'];
+  // Cada cosa por separado: que falte el personaje no debería dejar sin piso.
+  try {
+    const pisos: PlacedTile[] = [];
+    for (const nombre of Object.keys(manifiesto).filter((n) => n.startsWith('piso_'))) {
+      const tile = await loadTile(`dev#${nombre}`, await bytesDe(nombre));
+      pisos.push({ bitmap: tile.bitmap, anchorX: tile.anchorX, anchorY: tile.anchorY });
+    }
+    if (pisos.length > 0) {
+      lobby.setFloor(pisos);
+      aplicados.piso = `${pisos.length} variantes`;
+    }
   } catch (err) {
-    console.warn('No se pudo aplicar la pared de prueba', err);
+    console.warn('No se pudieron aplicar los pisos de prueba', err);
+  }
+
+  try {
+    const pared = await caras('pared');
+    if (pared) {
+      lobby.setWall(pared);
+      aplicados.pared = manifiesto['pared_SE.til'] ?? manifiesto['pared_SW.til'];
+    }
+    // La esquina es opcional: sin ella se dibujan las dos caras rectas.
+    lobby.setCorner(await caras('esquina'));
+  } catch (err) {
+    console.warn('No se pudieron aplicar las paredes de prueba', err);
   }
 
   try {

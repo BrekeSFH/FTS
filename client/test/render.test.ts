@@ -65,7 +65,7 @@ function vista(visibles: number[], exploradas: number[]): VisionView {
 describe('renderLobby con niebla', () => {
   it('sin visión dibuja todo y a todos', () => {
     const { canvas, imagenes, textos } = contextoFalso();
-    renderLobby(canvas, estado(), { ownSessionId: 'yo', floor: TILE });
+    renderLobby(canvas, estado(), { ownSessionId: 'yo', floors: [TILE] });
 
     expect(imagenes).toHaveLength(3);
     expect(imagenes.every((i) => i.alpha === 1)).toBe(true);
@@ -74,7 +74,7 @@ describe('renderLobby con niebla', () => {
 
   it('no dibuja lo que nunca se vio', () => {
     const { canvas, imagenes } = contextoFalso();
-    renderLobby(canvas, estado(), { ownSessionId: 'yo', floor: TILE, vision: vista([0], [1]) });
+    renderLobby(canvas, estado(), { ownSessionId: 'yo', floors: [TILE], vision: vista([0], [1]) });
 
     // La celda 2 no se vio nunca: ni piso ni contorno.
     expect(imagenes).toHaveLength(2);
@@ -82,7 +82,7 @@ describe('renderLobby con niebla', () => {
 
   it('apaga lo explorado que ya no se ve', () => {
     const { canvas, imagenes } = contextoFalso();
-    renderLobby(canvas, estado(), { ownSessionId: 'yo', floor: TILE, vision: vista([0], [1]) });
+    renderLobby(canvas, estado(), { ownSessionId: 'yo', floors: [TILE], vision: vista([0], [1]) });
 
     expect(imagenes[0].alpha, 'la celda visible').toBe(1);
     expect(imagenes[1].alpha, 'la recordada').toBeLessThan(1);
@@ -91,7 +91,7 @@ describe('renderLobby con niebla', () => {
 
   it('no muestra a quien está en una celda que no se ve', () => {
     const { canvas, textos } = contextoFalso();
-    renderLobby(canvas, estado(), { ownSessionId: 'yo', floor: TILE, vision: vista([0], [1, 2]) });
+    renderLobby(canvas, estado(), { ownSessionId: 'yo', floors: [TILE], vision: vista([0], [1, 2]) });
 
     // La celda del otro está explorada, así que el piso se dibuja; él no.
     expect(textos).toContain('Yo');
@@ -100,7 +100,7 @@ describe('renderLobby con niebla', () => {
 
   it('muestra a quien sí se ve', () => {
     const { canvas, textos } = contextoFalso();
-    renderLobby(canvas, estado(), { ownSessionId: 'yo', floor: TILE, vision: vista([0, 2], []) });
+    renderLobby(canvas, estado(), { ownSessionId: 'yo', floors: [TILE], vision: vista([0, 2], []) });
 
     expect(textos).toEqual(expect.arrayContaining(['Yo', 'Otro']));
   });

@@ -25,7 +25,7 @@ import {
   placeTile,
 } from '../iso/projection';
 import { hidesCell } from '../iso/occlusion';
-import { wallFaces, type WallSuffix } from '../iso/walls';
+import { wallPlan, type WallSuffix } from '../iso/walls';
 import type { VisionView } from './fog';
 import type { LobbyPlayer, LobbyState } from './connection';
 
@@ -49,6 +49,15 @@ export interface WallSet {
   fallback: PlacedTile;
 }
 
+/**
+ * Cara de la pieza de esquina.
+ *
+ * Las cuatro caras de una esquina miran a los cuatro cuadrantes; la sala
+ * siempre queda hacia `+x +y`, que en pantalla es abajo, así que siempre va
+ * la misma. Cuál es se decidió mirando las cuatro dibujadas.
+ */
+const CORNER_FACE: WallSuffix = 'SE';
+
 /** Un juego de paredes con una sola cara, para cuando no hay hermanos. */
 export function singleWall(tile: PlacedTile): WallSet {
   return { faces: {}, fallback: tile };
@@ -59,10 +68,18 @@ const faceOf = (wall: WallSet, suffix: WallSuffix): PlacedTile => wall.faces[suf
 export interface RenderOptions {
   /** Sesión propia, para destacarla entre las demás. */
   ownSessionId: string | null;
-  /** Tile de piso. Sin esto se dibujan rombos de alambre. */
-  floor?: PlacedTile | null;
+  /**
+   * Pisos. Se reparten por celda para que el suelo no se vea estampado; con
+   * uno solo se usa ese, y sin ninguno se dibujan rombos de alambre.
+   */
+  floors?: readonly PlacedTile[] | null;
   /** Con qué dibujar las paredes que declara el mapa. */
   wall?: WallSet | null;
+  /**
+   * Pieza de esquina para el vértice donde se juntan dos tramos. Sin ella se
+   * dibujan las dos caras rectas, que cierran el hueco pero se cruzan.
+   */
+  corner?: WallSet | null;
   /**
    * Con qué sprite dibujar a cada jugador. Devolver `null` deja el punto.
    *
@@ -94,6 +111,20 @@ const CHARACTER_HEADROOM = 80;
 const WALL_FADE = 0.28;
 /** Opacidad de lo que se recuerda pero no se está viendo. */
 const FOG_DIM = 0.4;
+
+/**
+ * Qué piso le toca a una celda.
+ *
+ * Siempre el mismo para la misma celda: si cambiara entre cuadros, el suelo
+ * titilaría. Se mezclan las dos coordenadas con números primos para que no
+ * salga un damero.
+ */
+function pisoDe(floors: readonly PlacedTile[] | null, x: number, y: number): PlacedTile | null {
+  if (!floors || floors.length === 0) return null;
+  if (floors.length === 1) return floors[0];
+  const mezcla = Math.abs(x * 73_856_093 + y * 19_349_663) % floors.length;
+  return floors[mezcla];
+}
 
 /** Cuánto sobresale un tile de su celda, para agrandar el canvas. */
 function overhang(tile: PlacedTile | null | undefined): { top: number; left: number } {
@@ -174,7 +205,14 @@ function drawPlayer(
 export function renderLobby(
   canvas: HTMLCanvasElement,
   state: LobbyState,
-  { ownSessionId, floor = null, wall = null, character = null, vision = null }: RenderOptions,
+  {
+    ownSessionId,
+    floors = null,
+    wall = null,
+    corner = null,
+    character = null,
+    vision = null,
+  }: RenderOptions,
 ): void {
   const context = canvas.getContext('2d');
   if (!context) return;
@@ -182,9 +220,11 @@ export function renderLobby(
   // Las paredes sobresalen bastante por arriba de su celda.
   // De la pared se mide la cara más alta: con juegos mezclados, una podría
   // sobresalir más que otra y quedar cortada arriba.
-  const salientes = [floor, ...(wall ? [wall.fallback, ...Object.values(wall.faces)] : [])].map(
-    overhang,
-  );
+  const salientes = [
+    ...(floors ?? []),
+    ...(wall ? [wall.fallback, ...Object.values(wall.faces)] : []),
+    ...(corner ? [corner.fallback, ...Object.values(corner.faces)] : []),
+  ].map(overhang);
   // Un personaje sobresale mucho menos que una pared, pero igual se le deja
   // sitio: sin esto una cabeza queda cortada contra el borde de arriba.
   const bounds = gridBounds(state.width, state.height, {
@@ -224,9 +264,10 @@ export function renderLobby(
     const pared = esPared(state, cell.x, cell.y);
     if (!pared) {
       context.globalAlpha = niebla;
-      if (floor) {
-        const pos = placeTile(cell.x, cell.y, floor.anchorX, floor.anchorY);
-        context.drawImage(floor.bitmap, pos.x, pos.y);
+      const piso = pisoDe(floors, cell.x, cell.y);
+      if (piso) {
+        const pos = placeTile(cell.x, cell.y, piso.anchorX, piso.anchorY);
+        context.drawImage(piso.bitmap, pos.x, pos.y);
       } else {
         const { x, y } = gridToScreen(cell.x, cell.y);
         strokeDiamond(context, x, y);
@@ -237,10 +278,14 @@ export function renderLobby(
     // Solo las caras del fondo que dan a una sala; las cercanas taparían el
     // interior. Las que quedan se desvanecen mientras escondan a alguien.
     if (wall && pared) {
-      const caras = wallFaces((x, y) => !esPared(state, x, y), cell.x, cell.y);
+      const plan = wallPlan((x, y) => !esPared(state, x, y), cell.x, cell.y);
       const tapando = jugadores.some(({ player }) => hidesCell(cell.x, cell.y, player.x, player.y));
-      for (const cara of caras) {
-        const tile = faceOf(wall, cara);
+      // En el vértice va una sola pieza de esquina; sin ella, las dos caras.
+      const piezas =
+        plan.corner && corner
+          ? [faceOf(corner, CORNER_FACE)]
+          : plan.faces.map((cara) => faceOf(wall, cara));
+      for (const tile of piezas) {
         const pos = placeTile(cell.x, cell.y, tile.anchorX, tile.anchorY);
         context.globalAlpha = Math.min(niebla, tapando ? WALL_FADE : 1);
         context.drawImage(tile.bitmap, pos.x, pos.y);
