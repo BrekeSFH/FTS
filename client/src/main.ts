@@ -13,6 +13,7 @@ import {
 import { isSprite } from './sprites/sprite';
 import { isTile } from './sprites/tile';
 import { isZar } from './sprites/zar';
+import { aplicarAssetsDePrueba } from './dev/assetsDePrueba';
 import { setupLobby } from './lobby/ui';
 import { clearSpriteCache, loadSpriteAnimation, pickDirectionalAnimation } from './iso/spriteset';
 import { FLOOR_TILE_HEIGHT, FLOOR_TILE_WIDTH, clearTileCache, loadTile } from './iso/tileset';
@@ -436,4 +437,12 @@ const lobby = setupLobby({
   board: $('lobby-board'),
   canvas: $<HTMLCanvasElement>('lobby-canvas'),
   fullscreen: $<HTMLButtonElement>('lobby-fullscreen'),
+});
+
+// Comodidad de desarrollo: si hay assets de prueba, el lobby arranca con
+// piso, pared y personaje puestos. Sin ellos no pasa nada.
+void aplicarAssetsDePrueba(lobby).then((aplicados) => {
+  if (!aplicados) return;
+  const puestos = Object.entries(aplicados).map(([que, de]) => `${que}: ${de}`);
+  if (puestos.length > 0) setStatus(`Assets de prueba — ${puestos.join(' · ')}`);
 });

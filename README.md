@@ -77,6 +77,19 @@ npm run typecheck
 
 Con el servidor levantado y el cliente en `npm run dev`, abrí http://localhost:5173 en dos pestañas, puse un nombre y conectá. Flechas o WASD para moverte; Q, E, Z y C para las diagonales.
 
+El botón **Pantalla completa** deja el tablero solo, escalado y centrado en negro. El control vive dentro del tablero para seguir siendo alcanzable ahí adentro, donde el resto de la página no se dibuja; `Esc` también sale.
+
+### Assets de prueba
+
+Para no tener que abrir los `.BOS` y buscar un tile a mano en cada prueba:
+
+```bash
+cd client
+npm run assets-de-prueba -- "C:/Program Files (x86)/Steam/steamapps/common/Fallout Tactics/core"
+```
+
+Extrae un piso, una pared y un personaje a `client/public/dev/`. Con eso presente, el cliente los aplica solo al arrancar y el lobby ya viene con piso, paredes y sprite. Si la carpeta no está, no pasa nada: es solo una comodidad de desarrollo y nunca se versiona.
+
 El GDD exige autoridad del servidor en todos los modos, así que **el cliente no mueve a nadie**: manda la intención de dar un paso y el servidor decide. Valida que sea un paso de una celda en alguna de las ocho direcciones, que el destino no sea pared y que no esté ocupado.
 
 El mapa también lo genera el servidor: salas rectangulares conectadas por pasillos en L, con un generador reproducible por semilla. Se sincroniza como una cadena de un carácter por celda. Nadie aparece dentro de la roca y no se puede atravesarla.
