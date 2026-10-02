@@ -6,15 +6,18 @@
  */
 import type { LoadedAnimation } from '../iso/spriteset';
 import {
+  LOBBY_ROOM,
   connectToLobby,
   onVision,
   requestVision,
+  sendEndTurn,
   sendStep,
   stepForKey,
   type LobbyPlayer,
   type LobbyRoom,
 } from './connection';
 import { createFog } from './fog';
+import { turnHud } from './hud';
 import { renderLobby, type PlacedTile } from './render';
 
 export interface LobbyElements {
@@ -25,6 +28,12 @@ export interface LobbyElements {
   canvas: HTMLCanvasElement;
   /** Botón para ver el tablero a pantalla completa. Opcional. */
   fullscreen?: HTMLButtonElement | null;
+  /** A qué sala entrar. Sin esto siempre se entra al lobby. */
+  room?: HTMLSelectElement | null;
+  /** Línea con la ronda y el turno. Solo se llena en la Vault. */
+  turn?: HTMLElement | null;
+  /** Botón para cerrar el turno propio. Solo sirve en la Vault. */
+  endTurn?: HTMLButtonElement | null;
 }
 
 export interface LobbyHandle {
@@ -75,7 +84,30 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
       // Sin máscara todavía se dibuja todo, para no arrancar en negro.
       vision: fog.empty ? null : fog,
     });
+    actualizarTurno();
   };
+
+  /**
+   * El turno actual, en la barra y en el botón.
+   *
+   * Lo que se puede hacer sale de `turnHud`, no de leer el estado acá: el
+   * servidor ya rechaza lo que no corresponde, y esto es solo para que el
+   * jugador sepa por qué sus teclas no hacen nada.
+   */
+  const actualizarTurno = (): void => {
+    const hud = turnHud(room?.state ?? null, room?.state?.players?.get(room.sessionId));
+    if (ui.turn) {
+      ui.turn.textContent = hud.text;
+      ui.turn.hidden = hud.text.length === 0;
+    }
+    if (ui.endTurn) {
+      ui.endTurn.hidden = !salaPorTurnos();
+      ui.endTurn.disabled = !hud.canEndTurn;
+    }
+  };
+
+  /** Si la sala elegida juega por turnos. */
+  const salaPorTurnos = (): boolean => (ui.room?.value ?? LOBBY_ROOM) !== LOBBY_ROOM;
 
   /** Cuánto se sigue animando después del último paso, en milisegundos. */
   const VENTANA_MOVIMIENTO = 260;
@@ -113,7 +145,9 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     ui.board.hidden = true;
     ui.connect.disabled = false;
     ui.connect.textContent = 'Conectar';
+    if (ui.room) ui.room.disabled = false;
     setStatus(reason, isError);
+    actualizarTurno();
   };
 
   /**
@@ -146,7 +180,8 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
 
     ui.connect.disabled = true;
     setStatus('Conectando…');
-    void connectToLobby(ui.name.value)
+    if (ui.room) ui.room.disabled = true;
+    void connectToLobby(ui.name.value, ui.room?.value ?? LOBBY_ROOM)
       .then((joined) => {
         room = joined;
         ui.connect.disabled = false;
@@ -190,7 +225,14 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     const step = stepForKey(event.key);
     if (!step) return;
     event.preventDefault();
+    // El servidor rechaza igual el paso de quien no tiene el turno; esto
+    // evita el viaje de ida y vuelta y el parpadeo que deja.
+    if (!turnHud(room.state ?? null, room.state?.players?.get(room.sessionId)).canMove) return;
     sendStep(room, step);
+  });
+
+  ui.endTurn?.addEventListener('click', () => {
+    if (room) sendEndTurn(room);
   });
 
   return {

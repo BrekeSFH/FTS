@@ -90,6 +90,33 @@ export function tick(state: TurnState, now: number): TurnState {
 }
 
 /**
+ * Mete a alguien en una instancia ya empezada.
+ *
+ * Entra con su turno dado por cerrado, así que no traba la ronda en curso:
+ * participa desde la siguiente. Al revés —entrar pendiente— le daría un turno
+ * extra a quien llegó tarde y dejaría esperando a los que ya cerraron.
+ *
+ * El punto 3 del GDD dice que a una mazmorra empezada no entra nadie, y eso
+ * se hace valer en la puerta: una sala que ya arrancó no acepta clientes.
+ * Esto es para armar la party antes de bajar, y para las salas abiertas de
+ * prueba, donde la gente va llegando.
+ */
+export function join(state: TurnState, id: string, now: number): TurnState {
+  if (state.participants.includes(id)) return state;
+  // Pasa por la barrera porque una instancia que se vació quedó con la ronda
+  // sin cerrar: sin esto, el primero en volver nunca llegaría a estar
+  // pendiente y la instancia se quedaría trabada para siempre.
+  return advanceIfDone(
+    {
+      ...state,
+      participants: [...state.participants, id],
+      deadlines: { ...state.deadlines, [id]: now + state.turnMs },
+    },
+    now,
+  );
+}
+
+/**
  * Saca a alguien que se desconectó. Su turno se da por cerrado, así que la
  * ronda no queda esperando a alguien que no va a volver.
  */

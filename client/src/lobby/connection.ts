@@ -8,6 +8,8 @@
 import { Client, type Room } from '@colyseus/sdk';
 
 export const LOBBY_ROOM = 'lobby';
+/** La sala de combate por turnos; ver `VaultRoom` del servidor. */
+export const VAULT_ROOM = 'vault';
 
 /**
  * Mensaje con el que el servidor manda qué ve el jugador: una celda por
@@ -25,7 +27,14 @@ export interface VisionMessage {
   cells: string;
 }
 
-/** Lo que el cliente necesita de cada jugador. */
+/**
+ * Lo que el cliente necesita de cada jugador.
+ *
+ * Los campos de combate solo los manda la Vault; en el lobby llegan sin
+ * definir. Se declaran opcionales y no en un tipo aparte porque el tablero y
+ * la niebla son los mismos para las dos salas, y partirlos en dos obligaría a
+ * duplicar el render para agregar una línea de texto.
+ */
 export interface LobbyPlayer {
   x: number;
   y: number;
@@ -33,6 +42,16 @@ export interface LobbyPlayer {
   hue: number;
   /** Octante al que mira, 0 a 7. Lo decide el servidor al moverse. */
   facing: number;
+  /** A qué bando pertenece. Solo en la Vault. */
+  party?: string;
+  /** Tirada de Iniciativa. Solo en la Vault. */
+  initiative?: number;
+  /** Puntos de acción que le quedan en el turno. Solo en la Vault. */
+  ap?: number;
+  /** Si ya cerró su turno en esta ronda. Solo en la Vault. */
+  done?: boolean;
+  /** Si puede actuar ahora. Solo en la Vault. */
+  active?: boolean;
 }
 
 /**
@@ -44,9 +63,14 @@ export interface LobbyState {
   height: number;
   /** El mapa: una celda por carácter, fila por fila. `#` es pared. */
   cells: string;
+  /** Ronda en curso. Solo en la Vault; en el lobby llega sin definir. */
+  round?: number;
+  /** Cuánto queda del turno, en milisegundos. Solo en la Vault. */
+  remainingMs?: number;
   players: {
     size: number;
     forEach(callback: (player: LobbyPlayer, sessionId: string) => void): void;
+    get(sessionId: string): LobbyPlayer | undefined;
   };
 }
 
@@ -70,9 +94,18 @@ export function defaultEndpoint(): string {
   return `${protocol}//${location.hostname}:2567`;
 }
 
-export async function connectToLobby(name: string, endpoint = defaultEndpoint()): Promise<LobbyRoom> {
+export async function connectToLobby(
+  name: string,
+  room: string = LOBBY_ROOM,
+  endpoint = defaultEndpoint(),
+): Promise<LobbyRoom> {
   const client = new Client(endpoint);
-  return client.joinOrCreate<LobbyState>(LOBBY_ROOM, { name });
+  return client.joinOrCreate<LobbyState>(room, { name });
+}
+
+/** Cierra el turno propio. Solo lo escucha la Vault. */
+export function sendEndTurn(room: LobbyRoom): void {
+  room.send('endTurn');
 }
 
 export function sendStep(room: LobbyRoom, step: Step): void {

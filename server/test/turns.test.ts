@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   EmptyInstanceError,
   endTurn,
+  join,
   leave,
   remainingMs,
   startInstance,
@@ -138,5 +139,41 @@ describe('desconexiones', () => {
     expect(s.participants).toEqual([]);
     expect(s.pending).toEqual([]);
     expect(s.round).toBe(1);
+  });
+});
+
+describe('entradas', () => {
+  it('el que entra no traba la ronda en curso', () => {
+    let s = arrancar(['a', 'b']);
+    s = join(s, 'c', T0 + 10);
+    expect(s.participants).toEqual(['a', 'b', 'c']);
+    expect(s.pending, 'arranca con el turno cerrado').toEqual(['a', 'b']);
+    expect(remainingMs(s, 'c', T0 + 10)).toBe(0);
+  });
+
+  it('participa desde la ronda siguiente', () => {
+    let s = join(arrancar(['a', 'b']), 'c', T0 + 10);
+    for (const id of ['a', 'b']) s = endTurn(s, id, T0 + 20);
+    expect(s.round).toBe(2);
+    expect(s.pending).toEqual(['a', 'b', 'c']);
+    expect(remainingMs(s, 'c', T0 + 20)).toBe(TURNO);
+  });
+
+  it('entrar dos veces no duplica a nadie', () => {
+    const s = arrancar(['a']);
+    expect(join(s, 'a', T0 + 10)).toBe(s);
+  });
+
+  it('entrar reabre una instancia que se había quedado vacía', () => {
+    // Al irse el último, la ronda quedó sin cerrar y sin nadie que la cierre.
+    let s = leave(arrancar(['a']), 'a', T0 + 10);
+    expect(s.participants).toEqual([]);
+    expect(s.pending).toEqual([]);
+
+    s = join(s, 'b', T0 + 20);
+    // Si "b" entrara con el turno cerrado como en una instancia viva, nadie
+    // podría volver a cerrar la ronda y la sala quedaría trabada.
+    expect(s.pending).toEqual(['b']);
+    expect(remainingMs(s, 'b', T0 + 20)).toBe(TURNO);
   });
 });
