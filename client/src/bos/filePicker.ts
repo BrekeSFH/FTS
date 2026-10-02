@@ -1,52 +1,36 @@
 /**
- * Selección de un archivo local: File System Access API (Chromium) con
- * fallback a `<input type="file">` (Firefox, Safari).
+ * Selección de archivos locales.
+ *
+ * Se usa `<input type="file">` y no la File System Access API. La API es más
+ * moderna y el GDD la mencionaba, pero `showOpenFilePicker` devolvió una
+ * promesa que nunca resuelve en una instalación real de Chrome: el diálogo
+ * aparece, el usuario elige y la aplicación se queda esperando para siempre,
+ * sin error ni forma de reintentar. El input no tiene ese problema, funciona
+ * en todos los navegadores y además permite elegir varios archivos de una
+ * sola vez, que es lo que hace falta: los tiles y los personajes viven en
+ * `.BOS` distintos.
+ *
+ * `showDirectoryPicker` sigue siendo interesante para leer una carpeta de
+ * instalación entera, pero eso es otra funcionalidad y vendrá con su propia
+ * verificación.
  */
 
-interface OpenFilePickerOptions {
-  multiple?: boolean;
-  excludeAcceptAllOption?: boolean;
-  types?: { description?: string; accept: Record<string, string[]> }[];
-}
-
-declare global {
-  interface Window {
-    showOpenFilePicker?: (options?: OpenFilePickerOptions) => Promise<FileSystemFileHandle[]>;
-  }
-}
-
+/** Si el navegador tiene la File System Access API. Hoy solo informativo. */
 export function supportsFileSystemAccess(): boolean {
-  return typeof window.showOpenFilePicker === 'function';
+  return typeof (window as { showOpenFilePicker?: unknown }).showOpenFilePicker === 'function';
 }
 
-/** Devuelve el archivo elegido, o `null` si el usuario canceló. */
-export async function pickBosFile(): Promise<File | null> {
-  if (supportsFileSystemAccess()) {
-    try {
-      const [handle] = await window.showOpenFilePicker!({
-        types: [
-          {
-            description: 'Contenedores de Fallout Tactics',
-            accept: { 'application/octet-stream': ['.bos', '.BOS'] },
-          },
-        ],
-      });
-      return handle ? await handle.getFile() : null;
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') return null;
-      throw err;
-    }
-  }
-  return pickWithInput();
-}
-
-function pickWithInput(): Promise<File | null> {
+/** Devuelve los archivos elegidos. Vacío si el usuario canceló. */
+export function pickBosFiles(): Promise<File[]> {
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.bos,.BOS';
-    input.addEventListener('change', () => resolve(input.files?.[0] ?? null), { once: true });
-    input.addEventListener('cancel', () => resolve(null), { once: true });
+    input.multiple = true;
+    // Algunos navegadores no disparan `cancel`; el input queda suelto y se
+    // recoge solo, pero la promesa no debe quedar colgada en el camino feliz.
+    input.addEventListener('change', () => resolve([...(input.files ?? [])]), { once: true });
+    input.addEventListener('cancel', () => resolve([]), { once: true });
     input.click();
   });
 }
