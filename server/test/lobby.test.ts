@@ -6,6 +6,7 @@ import { boot, type ColyseusTestServer } from '@colyseus/testing';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { LOBBY_ROOM, createServer } from '../src/createServer';
 import { DEFAULT_FACING, facingFromStep } from '../src/rooms/direction';
+import { WALL, isBlocked } from '../src/rooms/map';
 import { GRID_HEIGHT, GRID_WIDTH, type LobbyRoom, sanitizeName } from '../src/rooms/LobbyRoom';
 
 let colyseus: ColyseusTestServer;
@@ -174,5 +175,65 @@ describe('lobby', () => {
     expect(room.tryMove(client.sessionId, { dx: -1, dy: 0 })).toBe(false);
     expect([player.x, player.y]).toEqual([0, 0]);
     expect(player.facing).toBe(facingFromStep(-1, 0));
+  });
+
+  it('publica el mapa en el estado', async () => {
+    const room = await colyseus.createRoom<LobbyRoom>(LOBBY_ROOM);
+    const client = await colyseus.connectTo(room);
+    await waitFor(() => (client.state.cells?.length ?? 0) > 0, 'llega el mapa');
+
+    expect(client.state.cells).toBe(room.map.cells);
+    expect(client.state.cells).toHaveLength(client.state.width * client.state.height);
+    // El perímetro es pared, así que la primera fila tiene que ser toda pared.
+    expect(client.state.cells.slice(0, client.state.width)).toBe(WALL.repeat(client.state.width));
+  });
+
+  it('no deja caminar contra una pared', async () => {
+    const room = await colyseus.createRoom<LobbyRoom>(LOBBY_ROOM);
+    const client = await colyseus.connectTo(room);
+    await waitFor(() => room.state.players.size === 1, 'conectado');
+    const player = room.state.players.get(client.sessionId)!;
+
+    // Pegado al borde interior: hacia afuera hay pared.
+    player.x = 1;
+    player.y = 1;
+    expect(room.tryMove(client.sessionId, { dx: -1, dy: 0 })).toBe(false);
+    expect(room.tryMove(client.sessionId, { dx: 0, dy: -1 })).toBe(false);
+    expect([player.x, player.y]).toEqual([1, 1]);
+    // Hacia adentro sí, si esa celda está libre.
+    if (!isBlocked(room.map, 2, 1)) {
+      expect(room.tryMove(client.sessionId, { dx: 1, dy: 0 })).toBe(true);
+    }
+  });
+
+  it('no deja atravesar un obstáculo del interior', async () => {
+    const room = await colyseus.createRoom<LobbyRoom>(LOBBY_ROOM);
+    const client = await colyseus.connectTo(room);
+    await waitFor(() => room.state.players.size === 1, 'conectado');
+    const player = room.state.players.get(client.sessionId)!;
+
+    // Buscar un obstáculo que no sea del perímetro y pararse al lado.
+    let obstaculo: { x: number; y: number } | null = null;
+    for (let y = 2; y < room.map.height - 2 && !obstaculo; y++) {
+      for (let x = 2; x < room.map.width - 2; x++) {
+        if (isBlocked(room.map, x, y)) { obstaculo = { x, y }; break; }
+      }
+    }
+    expect(obstaculo, 'el mapa debería tener algún obstáculo interior').not.toBeNull();
+
+    player.x = obstaculo!.x - 1;
+    player.y = obstaculo!.y;
+    expect(room.tryMove(client.sessionId, { dx: 1, dy: 0 })).toBe(false);
+    expect([player.x, player.y]).toEqual([obstaculo!.x - 1, obstaculo!.y]);
+  });
+
+  it('nadie aparece dentro de una pared', async () => {
+    const room = await colyseus.createRoom<LobbyRoom>(LOBBY_ROOM);
+    for (let i = 0; i < 6; i++) await colyseus.connectTo(room);
+    await waitFor(() => room.state.players.size === 6, 'seis conectados');
+
+    for (const [, player] of room.state.players) {
+      expect(isBlocked(room.map, player.x, player.y), `jugador en ${player.x},${player.y}`).toBe(false);
+    }
   });
 });

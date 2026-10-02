@@ -26,6 +26,8 @@ export interface LobbyPlayer {
 export interface LobbyState {
   width: number;
   height: number;
+  /** El mapa: una celda por carácter, fila por fila. `#` es pared. */
+  cells: string;
   players: {
     size: number;
     forEach(callback: (player: LobbyPlayer, sessionId: string) => void): void;

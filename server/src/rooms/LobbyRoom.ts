@@ -8,6 +8,7 @@
  */
 import { Client, Room } from '@colyseus/core';
 import { DEFAULT_FACING, facingFromStep } from './direction';
+import { generateRoom, isBlocked, type GameMap } from './map';
 import { LobbyState, MapSchema, Player, type LobbyStateType } from './state';
 
 /** En Colyseus 0.18 el genérico de `Room` describe la sala, no solo el estado. */
@@ -52,10 +53,16 @@ export function sanitizeName(raw: unknown, fallback: string): string {
 export class LobbyRoom extends Room<LobbyRoomOptions> {
   maxClients = MAX_CLIENTS;
 
-  override onCreate(): void {
+  /** El mapa generado, para consultarlo sin releer la cadena del estado. */
+  map: GameMap = generateRoom(GRID_WIDTH, GRID_HEIGHT, 1);
+
+  override onCreate(options: { seed?: number } = {}): void {
+    // Semilla al azar salvo que se pida una, que es lo que usan los tests.
+    this.map = generateRoom(GRID_WIDTH, GRID_HEIGHT, options.seed ?? (Date.now() & 0xffff) + 1);
     this.state = new LobbyState({
-      width: GRID_WIDTH,
-      height: GRID_HEIGHT,
+      width: this.map.width,
+      height: this.map.height,
+      cells: this.map.cells,
       players: new MapSchema(),
     });
 
@@ -103,7 +110,8 @@ export class LobbyRoom extends Room<LobbyRoomOptions> {
 
     const x = player.x + dx;
     const y = player.y + dy;
-    if (x < 0 || y < 0 || x >= this.state.width || y >= this.state.height) return false;
+    // Fuera del mapa y pared son lo mismo: `isBlocked` cubre los dos.
+    if (isBlocked(this.map, x, y)) return false;
     if (this.isOccupied(x, y)) return false;
 
     player.x = x;
@@ -131,7 +139,7 @@ export class LobbyRoom extends Room<LobbyRoomOptions> {
           if (ring > 0 && Math.abs(dx) !== ring && Math.abs(dy) !== ring) continue;
           const x = cx + dx;
           const y = cy + dy;
-          if (x < 0 || y < 0 || x >= this.state.width || y >= this.state.height) continue;
+          if (isBlocked(this.map, x, y)) continue;
           if (!this.isOccupied(x, y)) return { x, y };
         }
       }

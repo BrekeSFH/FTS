@@ -26,6 +26,8 @@ export const LobbyState = schema(
   {
     width: t.uint16(),
     height: t.uint16(),
+    /** Una celda por carácter, fila por fila; ver `map.ts`. */
+    cells: t.string(),
     players: t.map(Player),
   },
   'LobbyState',
