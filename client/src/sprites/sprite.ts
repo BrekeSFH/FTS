@@ -47,6 +47,7 @@
  * facción, pero no está verificada. Tampoco se identificaron los 9 y 12 bytes
  * entre imágenes.
  */
+import { inflate } from '../formats/inflate';
 import { decodeZarRuns, type ZarImage } from './zar';
 
 const SPRITE_MAGIC = '<sprite>';
@@ -224,34 +225,6 @@ export function readSpriteAnimations(bytes: Uint8Array): SpriteAnimation[] {
     if (next !== undefined) animation.dataEnd = next;
   }
   return animations;
-}
-
-/**
- * Infla un flujo zlib del que no se conoce el largo comprimido: después del
- * flujo vienen las demás animaciones. Se lee hasta juntar `expected` bytes y
- * se corta ahí; dejar que el stream siga hasta el final lo haría fallar por
- * los bytes de más.
- */
-async function inflate(data: Uint8Array, expected: number): Promise<Uint8Array> {
-  const stream = new Blob([data as BlobPart]).stream().pipeThrough(new DecompressionStream('deflate'));
-  const reader = stream.getReader();
-  const out = new Uint8Array(expected);
-  let filled = 0;
-  try {
-    while (filled < expected) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      const take = Math.min(value.length, expected - filled);
-      out.set(value.subarray(0, take), filled);
-      filled += take;
-    }
-  } finally {
-    await reader.cancel().catch(() => {});
-  }
-  if (filled !== expected) {
-    throw new InvalidSpriteError(`El flujo comprimido dio ${filled} bytes y declaraba ${expected}`);
-  }
-  return out;
 }
 
 /**
