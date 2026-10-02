@@ -37,18 +37,24 @@ export interface LobbyElements {
 }
 
 export interface LobbyHandle {
-  /** Cambia el tile de piso. `null` vuelve a los rombos de alambre. */
-  setFloor(floor: PlacedTile | null): void;
+  /**
+   * Cambia los pisos. Con varios se reparten por celda, así el suelo no se
+   * ve estampado. `null` vuelve a los rombos de alambre.
+   */
+  setFloor(floor: PlacedTile | readonly PlacedTile[] | null): void;
   /** Cambia las paredes del fondo. `null` las saca. */
   setWall(wall: WallSet | null): void;
+  /** Cambia la pieza de esquina. `null` cae a dibujar las dos caras. */
+  setCorner(corner: WallSet | null): void;
   /** Cambia la animación de los jugadores. `null` vuelve a los puntos. */
   setCharacter(character: LoadedAnimation | null): void;
 }
 
 export function setupLobby(ui: LobbyElements): LobbyHandle {
   let room: LobbyRoom | null = null;
-  let floor: PlacedTile | null = null;
+  let floors: PlacedTile[] = [];
   let wall: WallSet | null = null;
+  let corner: WallSet | null = null;
   let character: LoadedAnimation | null = null;
   /**
    * Lo que el jugador ve y lo que ya vio. Se rehace en cada conexión: el
@@ -78,8 +84,9 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     if (!room?.state?.players) return;
     renderLobby(ui.canvas, room.state, {
       ownSessionId: room.sessionId,
-      floor,
+      floors,
       wall,
+      corner,
       character: character ? spriteFor : null,
       // Sin máscara todavía se dibuja todo, para no arrancar en negro.
       vision: fog.empty ? null : fog,
@@ -237,11 +244,15 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
 
   return {
     setFloor(next) {
-      floor = next;
+      floors = next === null ? [] : Array.isArray(next) ? [...next] : [next as PlacedTile];
       draw();
     },
     setWall(next) {
       wall = next;
+      draw();
+    },
+    setCorner(next) {
+      corner = next;
       draw();
     },
     setCharacter(next) {

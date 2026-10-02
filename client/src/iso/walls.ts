@@ -30,8 +30,9 @@
  * paredes del fondo, y de esas, su cara de adelante.
  */
 
-export const WALL_SUFFIXES = ['NE', 'NW', 'SE', 'SW'] as const;
-export type WallSuffix = (typeof WALL_SUFFIXES)[number];
+import { WALL_SUFFIXES, type WallSuffix } from '../tiles/catalogo';
+
+export { WALL_SUFFIXES, type WallSuffix };
 
 /** Si hay piso transitable en esa celda. */
 export type IsFloor = (x: number, y: number) => boolean;
@@ -74,29 +75,44 @@ export function siblingPaths(path: string): Record<WallSuffix, string> | null {
   return out;
 }
 
+/** Qué dibujar en una celda de roca. */
+export interface WallPlan {
+  /** Caras de pared recta, en orden de dibujo. */
+  faces: WallSuffix[];
+  /** Si la celda es el vértice donde se juntan dos tramos. */
+  corner: boolean;
+}
+
 /**
- * Qué caras hay que dibujar en una celda de roca, y en qué orden.
+ * Qué dibujar en una celda de roca.
  *
- * Vacío si no hay que dibujar nada: la roca que solo tiene piso detrás sería
+ * Sin caras no hay que dibujar nada: la roca que solo tiene piso detrás sería
  * la pared cercana y taparía la sala, y la rodeada de roca no la ve nadie.
  *
- * La diagonal cuenta. El vértice de una sala no tiene piso en ninguno de sus
- * dos lados —solo en diagonal—, así que mirando únicamente los vecinos
- * rectos quedaba sin dibujar y la esquina abierta. Con la diagonal, el
- * vértice muestra las dos caras y los dos tramos se juntan.
+ * La diagonal cuenta, pero solo cuando no hay piso en ninguno de los dos
+ * lados rectos. El vértice de una sala está en esa situación: sin él la
+ * esquina queda abierta. En medio de un tramo la diagonal también da a la
+ * sala, y contarla ahí agregaría una cara perpendicular que no corresponde.
+ *
+ * El vértice se marca aparte porque ahí los dos tramos se cruzan: dibujar las
+ * dos caras sobre la misma celda las superpone a la vista. Con una pieza de
+ * esquina del juego queda una L; sin ella se cae a las dos caras, que cierra
+ * el hueco aunque se note el cruce.
  */
-export function wallFaces(isFloor: IsFloor, x: number, y: number): WallSuffix[] {
+export function wallPlan(isFloor: IsFloor, x: number, y: number): WallPlan {
   const alLadoX = isFloor(x + 1, y);
   const alLadoY = isFloor(x, y + 1);
-  // Solo cuando no hay piso en ninguno de los dos lados rectos: en medio de
-  // un tramo la diagonal también da a la sala, y contarla ahí agregaría una
-  // cara perpendicular que no corresponde.
   const vertice = !alLadoX && !alLadoY && isFloor(x + 1, y + 1);
 
   const faces: WallSuffix[] = [];
   if (alLadoY || vertice) faces.push('SW');
   if (alLadoX || vertice) faces.push('SE');
-  return faces;
+  return { faces, corner: vertice };
+}
+
+/** Las caras de pared recta de una celda. */
+export function wallFaces(isFloor: IsFloor, x: number, y: number): WallSuffix[] {
+  return wallPlan(isFloor, x, y).faces;
 }
 
 /** Si una celda de roca hay que dibujarla como pared. */
