@@ -130,6 +130,10 @@ async function openArchives(): Promise<void> {
       const archive = await BosArchive.open(file);
       archives.push(archive);
       current = archive;
+      // Cada archivo se muestra apenas está listo: con 268 MB, esperar a que
+      // terminen todos parece que la aplicación se colgó.
+      renderArchives();
+      renderArchive(archive);
     } catch (err) {
       console.error(err);
       fallidos.push(
@@ -140,8 +144,6 @@ async function openArchives(): Promise<void> {
     }
   }
 
-  renderArchives();
-  if (current) renderArchive(current);
   setStatus(fallidos.length ? `No se pudieron abrir: ${fallidos.join('; ')}` : '', fallidos.length > 0);
 }
 
