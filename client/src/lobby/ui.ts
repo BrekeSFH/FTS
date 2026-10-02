@@ -5,7 +5,16 @@
  * servidor esté caído no debe afectar al explorador, y viceversa.
  */
 import type { LoadedAnimation } from '../iso/spriteset';
-import { connectToLobby, sendStep, stepForKey, type LobbyPlayer, type LobbyRoom } from './connection';
+import {
+  connectToLobby,
+  onVision,
+  requestVision,
+  sendStep,
+  stepForKey,
+  type LobbyPlayer,
+  type LobbyRoom,
+} from './connection';
+import { createFog } from './fog';
 import { renderLobby, type PlacedTile } from './render';
 
 export interface LobbyElements {
@@ -32,6 +41,12 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
   let floor: PlacedTile | null = null;
   let wall: PlacedTile | null = null;
   let character: LoadedAnimation | null = null;
+  /**
+   * Lo que el jugador ve y lo que ya vio. Se rehace en cada conexión: el
+   * servidor genera una mazmorra nueva por sala, así que lo explorado de la
+   * anterior no significa nada.
+   */
+  let fog = createFog();
 
   /**
    * Cuándo arrancó el movimiento de cada jugador y dónde estaba.
@@ -57,6 +72,8 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
       floor,
       wall,
       character: character ? spriteFor : null,
+      // Sin máscara todavía se dibuja todo, para no arrancar en negro.
+      vision: fog.empty ? null : fog,
     });
   };
 
@@ -136,6 +153,15 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
         ui.connect.textContent = 'Desconectar';
         ui.board.hidden = false;
         setStatus(`Conectado como ${joined.sessionId}.`);
+
+        fog = createFog();
+        onVision(joined, ({ width, cells }) => {
+          fog.update(cells, width);
+          draw();
+        });
+        // El servidor ya la empujó al entrar, pero ese empujón pudo salir
+        // antes de que este handler existiera.
+        requestVision(joined);
 
         joined.onStateChange(draw);
         // Mientras alguien camina hay que redibujar aunque no llegue estado
