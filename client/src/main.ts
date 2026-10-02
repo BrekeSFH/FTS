@@ -435,4 +435,5 @@ const lobby = setupLobby({
   status: $('lobby-status'),
   board: $('lobby-board'),
   canvas: $<HTMLCanvasElement>('lobby-canvas'),
+  fullscreen: $<HTMLButtonElement>('lobby-fullscreen'),
 });

@@ -190,3 +190,57 @@ pre {
   border-color: currentColor;
   font-weight: 600;
 }
+
+/* Pantalla completa del lobby: el canvas ocupa todo y se centra en negro. */
+#lobby-board:fullscreen {
+  display: grid;
+  place-content: center;
+  width: 100vw;
+  height: 100vh;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: #000;
+}
+
+#lobby-board:fullscreen #lobby-canvas {
+  /* El canvas tiene un tamaño fijo en píxeles; se escala sin deformarse y
+     sin pasarse de la pantalla. */
+  max-width: 100vw;
+  max-height: 100vh;
+  width: auto;
+  height: auto;
+  border: none;
+}
+
+#lobby-board:fullscreen .hint {
+  position: fixed;
+  left: 50%;
+  bottom: 0.75rem;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 0.3rem 0.8rem;
+  border-radius: 999px;
+  color: #cfd8e3;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+/* El control vive dentro del tablero para seguir siendo alcanzable en
+   pantalla completa, donde el resto de la página no se dibuja. */
+#lobby-board > #lobby-fullscreen {
+  margin-bottom: 0.5rem;
+}
+
+#lobby-board:fullscreen > #lobby-fullscreen {
+  position: fixed;
+  top: 0.75rem;
+  right: 0.75rem;
+  margin: 0;
+  z-index: 1;
+  opacity: 0.55;
+}
+
+#lobby-board:fullscreen > #lobby-fullscreen:hover,
+#lobby-board:fullscreen > #lobby-fullscreen:focus-visible {
+  opacity: 1;
+}

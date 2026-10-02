@@ -14,6 +14,8 @@ export interface LobbyElements {
   status: HTMLElement;
   board: HTMLElement;
   canvas: HTMLCanvasElement;
+  /** Botón para ver el tablero a pantalla completa. Opcional. */
+  fullscreen?: HTMLButtonElement | null;
 }
 
 export interface LobbyHandle {
@@ -96,6 +98,27 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     ui.connect.textContent = 'Conectar';
     setStatus(reason, isError);
   };
+
+  /**
+   * Pantalla completa sobre el tablero, no sobre la página entera: así el
+   * canvas queda solo y centrado, sin el explorador alrededor. Se escala por
+   * CSS, de modo que no hay que volver a dibujar nada.
+   */
+  ui.fullscreen?.addEventListener('click', () => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen();
+      return;
+    }
+    void ui.board.requestFullscreen().catch((err: unknown) => {
+      // Algunos navegadores lo niegan sin gesto del usuario o en un iframe.
+      setStatus(`No se pudo ir a pantalla completa: ${(err as Error).message}`, true);
+    });
+  });
+
+  document.addEventListener('fullscreenchange', () => {
+    if (!ui.fullscreen) return;
+    ui.fullscreen.textContent = document.fullscreenElement ? 'Salir de pantalla completa' : 'Pantalla completa';
+  });
 
   ui.connect.addEventListener('click', () => {
     if (room) {
