@@ -24,7 +24,8 @@ import {
   gridToScreen,
   placeTile,
 } from '../iso/projection';
-import { hidesCell, shouldDrawWall } from '../iso/occlusion';
+import { hidesCell } from '../iso/occlusion';
+import { wallFaces, type WallSuffix } from '../iso/walls';
 import type { VisionView } from './fog';
 import type { LobbyPlayer, LobbyState } from './connection';
 
@@ -35,13 +36,33 @@ export interface PlacedTile {
   anchorY: number;
 }
 
+/**
+ * Las caras de una pared.
+ *
+ * Los tiles del juego vienen por orientación; ver `iso/walls.ts`. Si el
+ * jugador eligió uno que no declara orientación, o si no están sus hermanos
+ * en los archivos abiertos, se usa `fallback` para todas: queda como antes,
+ * con todas las paredes para el mismo lado, pero se dibuja algo.
+ */
+export interface WallSet {
+  faces: Partial<Record<WallSuffix, PlacedTile>>;
+  fallback: PlacedTile;
+}
+
+/** Un juego de paredes con una sola cara, para cuando no hay hermanos. */
+export function singleWall(tile: PlacedTile): WallSet {
+  return { faces: {}, fallback: tile };
+}
+
+const faceOf = (wall: WallSet, suffix: WallSuffix): PlacedTile => wall.faces[suffix] ?? wall.fallback;
+
 export interface RenderOptions {
   /** Sesión propia, para destacarla entre las demás. */
   ownSessionId: string | null;
   /** Tile de piso. Sin esto se dibujan rombos de alambre. */
   floor?: PlacedTile | null;
-  /** Tile con el que se dibujan las paredes que declara el mapa. */
-  wall?: PlacedTile | null;
+  /** Con qué dibujar las paredes que declara el mapa. */
+  wall?: WallSet | null;
   /**
    * Con qué sprite dibujar a cada jugador. Devolver `null` deja el punto.
    *
@@ -159,7 +180,11 @@ export function renderLobby(
   if (!context) return;
 
   // Las paredes sobresalen bastante por arriba de su celda.
-  const salientes = [floor, wall].map(overhang);
+  // De la pared se mide la cara más alta: con juegos mezclados, una podría
+  // sobresalir más que otra y quedar cortada arriba.
+  const salientes = [floor, ...(wall ? [wall.fallback, ...Object.values(wall.faces)] : [])].map(
+    overhang,
+  );
   // Un personaje sobresale mucho menos que una pared, pero igual se le deja
   // sitio: sin esto una cabeza queda cortada contra el borde de arriba.
   const bounds = gridBounds(state.width, state.height, {
@@ -211,12 +236,16 @@ export function renderLobby(
 
     // Solo las caras del fondo que dan a una sala; las cercanas taparían el
     // interior. Las que quedan se desvanecen mientras escondan a alguien.
-    if (wall && pared && shouldDrawWall((x, y) => !esPared(state, x, y), cell.x, cell.y)) {
-      const pos = placeTile(cell.x, cell.y, wall.anchorX, wall.anchorY);
+    if (wall && pared) {
+      const caras = wallFaces((x, y) => !esPared(state, x, y), cell.x, cell.y);
       const tapando = jugadores.some(({ player }) => hidesCell(cell.x, cell.y, player.x, player.y));
-      context.globalAlpha = Math.min(niebla, tapando ? WALL_FADE : 1);
-      context.drawImage(wall.bitmap, pos.x, pos.y);
-      context.globalAlpha = 1;
+      for (const cara of caras) {
+        const tile = faceOf(wall, cara);
+        const pos = placeTile(cell.x, cell.y, tile.anchorX, tile.anchorY);
+        context.globalAlpha = Math.min(niebla, tapando ? WALL_FADE : 1);
+        context.drawImage(tile.bitmap, pos.x, pos.y);
+        context.globalAlpha = 1;
+      }
     }
 
     // A nadie se lo dibuja en una celda que no se esté viendo: lo explorado es

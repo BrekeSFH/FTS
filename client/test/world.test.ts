@@ -107,12 +107,13 @@ describe('readWorld', () => {
     expect(world.regions).toBe(1);
   });
 
-  it('convierte unidades de mundo a celdas', async () => {
+  it('convierte unidades de mundo a celdas, con Z como columna', async () => {
     const world = await readWorld(
       await mundo(cuerpo(UNA_RUTA, [[record({ tile: 1, x: 60, y: 127, z: 120 })]])),
     );
     expect(world.tiles).toHaveLength(1);
-    expect(world.tiles[0]).toMatchObject({ tile: 1, x: 10, y: 20, level: 127, aligned: true });
+    // 120/6 = 20 es la columna y 60/6 = 10 la fila: la Z del mundo va a `x`.
+    expect(world.tiles[0]).toMatchObject({ tile: 1, x: 20, y: 10, level: 127, aligned: true });
   });
 
   it('el índice es 1-based: el 0 es una celda sin tile', async () => {
@@ -147,7 +148,7 @@ describe('readWorld', () => {
       ),
     );
     expect(world.levels).toEqual([120, 128]);
-    expect(world.bounds).toEqual({ minX: 0, minY: 1, maxX: 10, maxY: 6 });
+    expect(world.bounds).toEqual({ minX: 1, minY: 0, maxX: 6, maxY: 10 });
   });
 
   it('recorre todas las regiones de la cadena', async () => {

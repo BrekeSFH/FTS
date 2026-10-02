@@ -18,7 +18,7 @@ import {
 } from './connection';
 import { createFog } from './fog';
 import { turnHud } from './hud';
-import { renderLobby, type PlacedTile } from './render';
+import { renderLobby, type PlacedTile, type WallSet } from './render';
 
 export interface LobbyElements {
   connect: HTMLButtonElement;
@@ -39,8 +39,8 @@ export interface LobbyElements {
 export interface LobbyHandle {
   /** Cambia el tile de piso. `null` vuelve a los rombos de alambre. */
   setFloor(floor: PlacedTile | null): void;
-  /** Cambia el tile de pared del fondo. `null` lo saca. */
-  setWall(wall: PlacedTile | null): void;
+  /** Cambia las paredes del fondo. `null` las saca. */
+  setWall(wall: WallSet | null): void;
   /** Cambia la animación de los jugadores. `null` vuelve a los puntos. */
   setCharacter(character: LoadedAnimation | null): void;
 }
@@ -48,7 +48,7 @@ export interface LobbyHandle {
 export function setupLobby(ui: LobbyElements): LobbyHandle {
   let room: LobbyRoom | null = null;
   let floor: PlacedTile | null = null;
-  let wall: PlacedTile | null = null;
+  let wall: WallSet | null = null;
   let character: LoadedAnimation | null = null;
   /**
    * Lo que el jugador ve y lo que ya vio. Se rehace en cada conexión: el

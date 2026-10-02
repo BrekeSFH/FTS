@@ -17,6 +17,8 @@ import { aplicarAssetsDePrueba } from './dev/assetsDePrueba';
 import { setupLobby } from './lobby/ui';
 import { clearSpriteCache, loadSpriteAnimation, pickDirectionalAnimation } from './iso/spriteset';
 import { FLOOR_TILE_HEIGHT, FLOOR_TILE_WIDTH, clearTileCache, loadTile } from './iso/tileset';
+import { WALL_SUFFIXES, siblingPath, splitOrientation, type WallSuffix } from './iso/walls';
+import { singleWall, type PlacedTile, type WallSet } from './lobby/render';
 import { drawWorldToCanvas } from './maps/render';
 import { isWorld, readWorld } from './maps/world';
 
@@ -418,6 +420,37 @@ async function drawMission(entry: BosEntry): Promise<void> {
   }
 }
 
+/**
+ * Junta las orientaciones de una pared.
+ *
+ * Los tiles del juego vienen por orientación —`..._SE.til`, `..._SW.til`— y
+ * dibujar siempre el mismo deja todas las paredes mirando para el mismo
+ * lado. Al elegir una se buscan sus hermanas en el mismo archivo; las que no
+ * estén simplemente faltan y se cae al tile elegido.
+ */
+async function loadWallSet(
+  archive: BosArchive,
+  path: string,
+  fallback: PlacedTile,
+): Promise<WallSet> {
+  if (!splitOrientation(path)) return singleWall(fallback);
+
+  const faces: Partial<Record<WallSuffix, PlacedTile>> = {};
+  for (const suffix of WALL_SUFFIXES) {
+    const hermana = siblingPath(path, suffix)!;
+    const entry = archive.files.find((e) => e.path === hermana);
+    if (!entry) continue;
+    try {
+      const tile = await loadTile(cacheKey(archive, hermana), await archive.readBytes(hermana));
+      faces[suffix] = { bitmap: tile.bitmap, anchorX: tile.anchorX, anchorY: tile.anchorY };
+    } catch (err) {
+      // Que una orientación esté rota no debería dejar sin paredes.
+      console.warn(`No se pudo cargar la pared ${hermana}`, err);
+    }
+  }
+  return { faces, fallback };
+}
+
 /** Usa un `.TIL` como piso o como pared del fondo del lobby. */
 async function useAsTile(entry: BosEntry, role: 'floor' | 'wall'): Promise<void> {
   if (!current) return;
@@ -427,21 +460,30 @@ async function useAsTile(entry: BosEntry, role: 'floor' | 'wall'): Promise<void>
     const archive = current;
     const tile = await loadTile(cacheKey(archive, entry.path), await archive.readBytes(entry.path));
     const colocado = { bitmap: tile.bitmap, anchorX: tile.anchorX, anchorY: tile.anchorY };
+    let hermanos = 0;
     if (role === 'floor') {
       lobby.setFloor(colocado);
       lobbySources.floor = archive.name;
     } else {
-      lobby.setWall(colocado);
+      const juego = await loadWallSet(archive, entry.path, colocado);
+      hermanos = Object.keys(juego.faces).length;
+      lobby.setWall(juego);
       lobbySources.wall = archive.name;
     }
 
     // Solo el piso necesita encajar con el paso del rombo: una pared se apoya
     // por su ancla y puede medir cualquier cosa.
-    const aviso =
-      role === 'floor' && !tile.fitsGrid
-        ? `, pero mide ${tile.width}×${tile.height} y el paso del rombo es` +
-          ` ${FLOOR_TILE_WIDTH}×${FLOOR_TILE_HEIGHT}: va a quedar con costuras`
-        : ` (${tile.width}×${tile.height}, ancla ${tile.anchorX},${tile.anchorY})`;
+    let aviso = ` (${tile.width}×${tile.height}, ancla ${tile.anchorX},${tile.anchorY})`;
+    if (role === 'floor' && !tile.fitsGrid) {
+      aviso =
+        `, pero mide ${tile.width}×${tile.height} y el paso del rombo es` +
+        ` ${FLOOR_TILE_WIDTH}×${FLOOR_TILE_HEIGHT}: va a quedar con costuras`;
+    } else if (role === 'wall') {
+      aviso +=
+        hermanos > 1
+          ? ` con ${hermanos} orientaciones`
+          : ', sin hermanos de otra orientación: todas las paredes van a mirar igual';
+    }
     setStatus(`${etiqueta[0].toUpperCase()}${etiqueta.slice(1)} del lobby: ${entry.path}${aviso}.`);
   } catch (err) {
     console.error(err);

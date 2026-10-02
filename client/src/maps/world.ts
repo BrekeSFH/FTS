@@ -60,7 +60,10 @@ export class InvalidWorldError extends Error {
 export interface WorldTile {
   /** Índice en `tilePaths`. Los récords vacíos no llegan acá. */
   tile: number;
-  /** Celda de la esquina mínima de su caja. */
+  /**
+   * Celda de la esquina mínima de su caja, en los ejes de la grilla propia:
+   * `x` sale de la Z del mundo y `y` de su X. Ver la nota en `readRegions`.
+   */
   x: number;
   y: number;
   /** Altura, en unidades de mundo. Es lo que separa los pisos de un edificio. */
@@ -195,8 +198,13 @@ function readRegions(body: Uint8Array, from: number, pathCount: number) {
       levels.add(y0);
       tiles.push({
         tile,
-        x: Math.floor(x0 / WORLD_UNITS_PER_CELL),
-        y: Math.floor(z0 / WORLD_UNITS_PER_CELL),
+        // Z del mundo es la columna y X la fila, no al revés. Se vio con las
+        // paredes: una pared con piso del lado `+X` del mundo usa la cara
+        // `SW`, y en pantalla esa cara encastra con la de al lado solo si
+        // `+X` corre por el eje vertical de la grilla. Con los ejes
+        // cambiados el mapa sale espejado y las paredes quedan con huecos.
+        x: Math.floor(z0 / WORLD_UNITS_PER_CELL),
+        y: Math.floor(x0 / WORLD_UNITS_PER_CELL),
         level: y0,
         layer,
         rect: {
