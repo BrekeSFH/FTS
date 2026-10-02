@@ -12,6 +12,8 @@
  */
 import { loadSpriteAnimation, pickDirectionalAnimation } from '../iso/spriteset';
 import { loadTile } from '../iso/tileset';
+import { WALL_SUFFIXES, type WallSuffix } from '../iso/walls';
+import type { PlacedTile, WallSet } from '../lobby/render';
 import type { LobbyHandle } from '../lobby/ui';
 
 const BASE = '/dev';
@@ -58,7 +60,24 @@ export async function aplicarAssetsDePrueba(lobby: LobbyHandle): Promise<AssetsA
 
   try {
     const tile = await loadTile('dev#pared', await bytesDe('pared.til'));
-    lobby.setWall({ bitmap: tile.bitmap, anchorX: tile.anchorX, anchorY: tile.anchorY });
+    const fallback: PlacedTile = { bitmap: tile.bitmap, anchorX: tile.anchorX, anchorY: tile.anchorY };
+
+    // Las orientaciones son opcionales: el script las extrae si existen, y
+    // sin ellas la pared se dibuja igual pero siempre para el mismo lado.
+    const faces: Partial<Record<WallSuffix, PlacedTile>> = {};
+    for (const suffix of WALL_SUFFIXES) {
+      const nombre = `pared_${suffix}.til`;
+      if (!(nombre in manifiesto)) continue;
+      try {
+        const cara = await loadTile(`dev#${nombre}`, await bytesDe(nombre));
+        faces[suffix] = { bitmap: cara.bitmap, anchorX: cara.anchorX, anchorY: cara.anchorY };
+      } catch (err) {
+        console.warn(`No se pudo aplicar ${nombre}`, err);
+      }
+    }
+
+    const juego: WallSet = { faces, fallback };
+    lobby.setWall(juego);
     aplicados.pared = manifiesto['pared.til'];
   } catch (err) {
     console.warn('No se pudo aplicar la pared de prueba', err);

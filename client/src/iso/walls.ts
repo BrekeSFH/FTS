@@ -1,0 +1,95 @@
+/**
+ * Orientación de las paredes.
+ *
+ * Los tiles de Fallout Tactics vienen en juegos de hasta cuatro, con la
+ * orientación al final del nombre: `..._NE.til`, `_NW`, `_SE`, `_SW`. De los
+ * 29.957 tiles de una instalación, 9.162 familias usan ese sufijo y solo 11
+ * archivos no lo tienen.
+ *
+ * Dibujar siempre el mismo archivo deja todas las paredes mirando para el
+ * mismo lado, que es lo que pasaba antes de esto.
+ *
+ * Qué sufijo va en cada celda salió de medirlo sobre `bunker01.mis`, cruzando
+ * cada pared con dónde tenía piso al lado:
+ *
+ *   piso en +X del mundo →  NE 94, SW 79
+ *   piso en +Z del mundo →  NW 93, SE 75
+ *
+ * O sea que el eje manda y cada eje tiene dos caras: la de atrás (NE, NW) y
+ * la de adelante (SW, SE). Que las de adelante son las que importan lo
+ * confirma el catálogo: de las 1.136 familias de pared que no traen las
+ * cuatro, 1.105 traen justamente `SE` y `SW`.
+ *
+ * Ojo con los ejes: la X del mundo es la **fila** de la grilla propia, no la
+ * columna (ver `maps/world.ts`). Por eso `SW` va donde hay piso en `+y` y no
+ * en `+x`. Haberlo tomado al revés daba paredes con huecos: cada pieza va
+ * inclinada para encastrar con la siguiente, y puesta sobre el otro eje se
+ * separa en vez de unirse.
+ *
+ * La cámara isométrica mira desde arriba, así que de una sala se ven las
+ * paredes del fondo, y de esas, su cara de adelante.
+ */
+
+export const WALL_SUFFIXES = ['NE', 'NW', 'SE', 'SW'] as const;
+export type WallSuffix = (typeof WALL_SUFFIXES)[number];
+
+/** Si hay piso transitable en esa celda. */
+export type IsFloor = (x: number, y: number) => boolean;
+
+const SUFFIX_PATTERN = /^(.*)_(NE|NW|SE|SW)(\.til)$/i;
+
+export interface TileName {
+  /** La ruta sin el sufijo ni la extensión. */
+  family: string;
+  suffix: WallSuffix;
+  extension: string;
+}
+
+/** Separa una ruta `.til` en familia y orientación, o `null` si no la tiene. */
+export function splitOrientation(path: string): TileName | null {
+  const match = SUFFIX_PATTERN.exec(path);
+  if (!match) return null;
+  return {
+    family: match[1],
+    suffix: match[2].toUpperCase() as WallSuffix,
+    extension: match[3],
+  };
+}
+
+/**
+ * La ruta del hermano con otra orientación, conservando la caja del nombre
+ * original. `null` si la ruta no declara orientación.
+ */
+export function siblingPath(path: string, suffix: WallSuffix): string | null {
+  const parts = splitOrientation(path);
+  if (!parts) return null;
+  return `${parts.family}_${suffix}${parts.extension}`;
+}
+
+/** Las cuatro rutas hermanas, la propia incluida. */
+export function siblingPaths(path: string): Record<WallSuffix, string> | null {
+  if (!splitOrientation(path)) return null;
+  const out = {} as Record<WallSuffix, string>;
+  for (const suffix of WALL_SUFFIXES) out[suffix] = siblingPath(path, suffix)!;
+  return out;
+}
+
+/**
+ * Qué caras hay que dibujar en una celda de roca, y en qué orden.
+ *
+ * Vacío si no hay que dibujar nada: la roca que solo tiene piso detrás sería
+ * la pared cercana y taparía la sala, y la rodeada de roca no la ve nadie.
+ *
+ * Una esquina interior —piso en los dos lados— muestra las dos caras.
+ */
+export function wallFaces(isFloor: IsFloor, x: number, y: number): WallSuffix[] {
+  const faces: WallSuffix[] = [];
+  if (isFloor(x, y + 1)) faces.push('SW');
+  if (isFloor(x + 1, y)) faces.push('SE');
+  return faces;
+}
+
+/** Si una celda de roca hay que dibujarla como pared. */
+export function shouldDrawWall(isFloor: IsFloor, x: number, y: number): boolean {
+  return wallFaces(isFloor, x, y).length > 0;
+}

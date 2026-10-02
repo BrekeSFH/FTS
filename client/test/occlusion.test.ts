@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { WALL_OCCLUSION_DEPTH, hidesCell, shouldDrawWall } from '../src/iso/occlusion';
+import { WALL_OCCLUSION_DEPTH, hidesCell } from '../src/iso/occlusion';
+import { shouldDrawWall } from '../src/iso/walls';
 
 /**
  * Mapa de prueba: una sala de 3x3 rodeada de roca.

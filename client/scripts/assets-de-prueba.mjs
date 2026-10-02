@@ -31,6 +31,15 @@ function medidasDeTile(bytes) {
   return { width: view.getUint32(campos + 8, true), height: view.getUint32(campos + 12, true) };
 }
 
+/**
+ * Familias de muro corrido, por orden de preferencia.
+ *
+ * Salieron de contar qué paredes usan más los mapas del juego. Si la
+ * instalación no tiene ninguna, no se extrae pared y el tablero cae a los
+ * rombos de alambre, que es mejor que elegir cualquier cosa.
+ */
+const MUROS_CORRIDOS = ['cinderblockcaps', 'shortiron', 'interiorplain', 'wshort'];
+
 const PEDIDOS = [
   {
     archivo: 'tiles_0.bos',
@@ -45,11 +54,28 @@ const PEDIDOS = [
   {
     archivo: 'tiles_0.bos',
     salida: 'pared.til',
-    nombreSirve: (nombre) => nombre.includes('wall') && nombre.endsWith('.til'),
+    /*
+     * Un muro corrido, no una punta ni una esquina.
+     *
+     * El primer `.til` con "wall" en el nombre resultó ser `BOSTentEND`, la
+     * punta de una carpa: en el tablero quedaban paneles sueltos con huecos
+     * en vez de una pared. Así que se buscan familias conocidas, elegidas por
+     * las que más usan los 103 mapas del juego —`CinderBlockCaps` sale 2859
+     * veces— y se descarta todo lo que sea remate o abertura.
+     */
+    nombreSirve: (nombre) => {
+      if (!nombre.endsWith('.til') || !nombre.includes('_wall_')) return false;
+      if (/end|corner|door|gate|window|stair/.test(nombre)) return false;
+      return MUROS_CORRIDOS.some((familia) => nombre.includes(familia));
+    },
     contenidoSirve: (bytes) => {
       const { width, height } = medidasDeTile(bytes);
-      return height > 100 && height < 120 && width > 40;
+      return height > 60 && height < 160 && width > 40;
     },
+    rango: (nombre) => MUROS_CORRIDOS.findIndex((familia) => nombre.includes(familia)),
+    // Una pared sola deja todas las del mapa mirando para el mismo lado: hay
+    // que llevarse también sus hermanas de otra orientación.
+    hermanas: true,
   },
   {
     archivo: 'spr-character_0.bos',
@@ -64,20 +90,57 @@ const PEDIDOS = [
 await mkdir(DESTINO, { recursive: true });
 const manifiesto = {};
 
+/** Las cuatro orientaciones que los tiles declaran al final del nombre. */
+const ORIENTACIONES = ['NE', 'NW', 'SE', 'SW'];
+const PATRON_ORIENTACION = /^(.*)_(NE|NW|SE|SW)(\.til)$/i;
+
 for (const pedido of PEDIDOS) {
   const ruta = join(core, pedido.archivo);
   const reader = new ZipReader(new BlobReader(await openAsBlob(ruta)), { useWebWorkers: false });
   let encontrado = null;
+  let hermanasDe = null;
+  // Con preferencia, se miran todos los candidatos y gana el mejor; sin
+  // ella, el primero que sirva. Tomar siempre el primero hacía ganar al que
+  // saliera antes por orden alfabético, que no tiene nada que ver con cuál
+  // conviene.
+  let mejorRango = Infinity;
+  let mejorBytes = null;
   for (const entrada of await reader.getEntries()) {
     if (entrada.directory) continue;
     // Descomprimir solo si el nombre ya pinta bien: son decenas de miles.
-    if (!pedido.nombreSirve(entrada.filename.toLowerCase())) continue;
+    const nombre = entrada.filename.toLowerCase();
+    if (!pedido.nombreSirve(nombre)) continue;
     const bytes = await entrada.getData(new Uint8ArrayWriter());
     if (!pedido.contenidoSirve(bytes)) continue;
-    await writeFile(join(DESTINO, pedido.salida), bytes);
+
+    const rango = pedido.rango ? pedido.rango(nombre) : 0;
+    if (rango >= mejorRango) continue;
+    mejorRango = rango;
+    mejorBytes = bytes;
     encontrado = entrada.filename;
-    break;
+    if (pedido.hermanas) hermanasDe = entrada.filename;
+    if (rango === 0 && !pedido.rango) break;
   }
+  if (mejorBytes) await writeFile(join(DESTINO, pedido.salida), mejorBytes);
+  // Las hermanas salen del nombre: `..._SE.til` tiene `_SW`, `_NE` y `_NW`.
+  if (hermanasDe) {
+    const partes = PATRON_ORIENTACION.exec(hermanasDe);
+    if (partes) {
+      const porRuta = new Map(
+        (await reader.getEntries()).filter((e) => !e.directory).map((e) => [e.filename, e]),
+      );
+      for (const orientacion of ORIENTACIONES) {
+        const hermana = `${partes[1]}_${orientacion}${partes[3]}`;
+        const entrada = porRuta.get(hermana);
+        if (!entrada) continue;
+        const salida = `pared_${orientacion}.til`;
+        await writeFile(join(DESTINO, salida), await entrada.getData(new Uint8ArrayWriter()));
+        manifiesto[salida] = hermana;
+        console.log(`${salida.padEnd(14)} <- ${hermana}`);
+      }
+    }
+  }
+
   await reader.close();
   if (!encontrado) {
     console.error(`No se encontró nada que sirva para ${pedido.salida} en ${pedido.archivo}`);
