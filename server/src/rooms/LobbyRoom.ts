@@ -10,6 +10,7 @@ import { Client, Room } from '@colyseus/core';
 import { DEFAULT_FACING, facingFromStep } from './direction';
 import { floorCells, generateMap, isBlocked, type GeneratedMap } from './map';
 import { LobbyState, MapSchema, Player, type LobbyStateType } from './state';
+import { SIGHT_RADIUS, visibleMask } from './vision';
 
 /** En Colyseus 0.18 el genérico de `Room` describe la sala, no solo el estado. */
 type LobbyRoomOptions = { state: LobbyStateType };
@@ -24,6 +25,26 @@ export const MAX_CLIENTS = 32;
 const MAP_OPTIONS = { rooms: 5, minRoom: 4, maxRoom: 7 };
 
 const MAX_NAME_LENGTH = 16;
+
+/**
+ * Nombre del mensaje con el que cada cliente recibe lo que ve.
+ *
+ * Va por mensaje privado y no como campo del estado a propósito: la máscara
+ * de uno no es asunto de los demás. Que el cliente igual reciba el mapa
+ * entero es una deuda aparte —habría que mandarle solo lo explorado—, pero no
+ * hay razón para agregarle encima la vista de los rivales.
+ */
+export const VISION_MESSAGE = 'vision';
+
+/**
+ * Lo que viaja en ese mensaje. Lleva el ancho porque sin él la máscara no se
+ * puede indexar, y el mensaje puede llegarle al cliente antes que el estado.
+ */
+export interface VisionMessage {
+  width: number;
+  /** Una celda por carácter, fila por fila. `1` es visible. */
+  cells: string;
+}
 
 export interface MoveMessage {
   dx: number;
@@ -75,8 +96,15 @@ export class LobbyRoom extends Room<LobbyRoomOptions> {
     });
 
     this.onMessage('move', (client, message: MoveMessage) => {
-      this.tryMove(client.sessionId, message);
+      // Solo si se movió: girar en el lugar no cambia lo que se ve, porque la
+      // vista es circular y no un cono. El día que sea un cono, esto cambia.
+      if (this.tryMove(client.sessionId, message)) this.sendVision(client);
     });
+
+    // El cliente también puede pedirla. El empujón de `onJoin` sale mientras
+    // el cliente todavía está terminando de engancharse, así que quien no lo
+    // haya visto llegar tiene cómo reclamarlo en vez de quedarse a ciegas.
+    this.onMessage(VISION_MESSAGE, (client) => this.sendVision(client));
   }
 
   override onJoin(client: Client, options: JoinOptions = {}): void {
@@ -97,6 +125,8 @@ export class LobbyRoom extends Room<LobbyRoomOptions> {
         facing: DEFAULT_FACING,
       }),
     );
+
+    this.sendVision(client);
   }
 
   override onLeave(client: Client): void {
@@ -125,6 +155,19 @@ export class LobbyRoom extends Room<LobbyRoomOptions> {
     player.x = x;
     player.y = y;
     return true;
+  }
+
+  /** Qué ve un jugador, o `null` si no está en la sala. */
+  visionFor(sessionId: string): string | null {
+    const player = this.state.players.get(sessionId);
+    if (!player) return null;
+    return visibleMask(this.map, player.x, player.y, SIGHT_RADIUS);
+  }
+
+  /** Le manda a un cliente su propia máscara de visión. */
+  private sendVision(client: Client): void {
+    const cells = this.visionFor(client.sessionId);
+    if (cells) client.send(VISION_MESSAGE, { width: this.map.width, cells } satisfies VisionMessage);
   }
 
   isOccupied(x: number, y: number): boolean {

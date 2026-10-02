@@ -10,6 +10,9 @@
  * Todo se dibuja en un solo recorrido de atrás hacia adelante. Los jugadores
  * no van en una pasada aparte: uno parado detrás de una pared tiene que
  * quedar tapado por ella, y eso solo sale si se intercalan por celda.
+ *
+ * La niebla se aplica en ese mismo recorrido, porque decide celda por celda
+ * si se dibuja entera, apagada o nada.
  */
 import {
   CELL_ANCHOR_Y,
@@ -22,6 +25,7 @@ import {
   placeTile,
 } from '../iso/projection';
 import { hidesCell, shouldDrawWall } from '../iso/occlusion';
+import type { VisionView } from './fog';
 import type { LobbyPlayer, LobbyState } from './connection';
 
 /** Un tile listo para dibujar, con el punto que se apoya en la celda. */
@@ -45,6 +49,11 @@ export interface RenderOptions {
    * reloj, y el reloj vive en quien llama, no acá.
    */
   character?: ((player: LobbyPlayer, sessionId: string) => PlacedTile | null) | null;
+  /**
+   * Qué ve el jugador. Sin esto se dibuja todo: es lo que corresponde mientras
+   * el servidor no haya mandado la primera máscara, para no arrancar a oscuras.
+   */
+  vision?: VisionView | null;
 }
 
 /** Carácter con el que el servidor marca una pared. */
@@ -62,6 +71,8 @@ const DOT_RADIUS = 7;
 const CHARACTER_HEADROOM = 80;
 /** Opacidad de una pared que está tapando a alguien. */
 const WALL_FADE = 0.28;
+/** Opacidad de lo que se recuerda pero no se está viendo. */
+const FOG_DIM = 0.4;
 
 /** Cuánto sobresale un tile de su celda, para agrandar el canvas. */
 function overhang(tile: PlacedTile | null | undefined): { top: number; left: number } {
@@ -142,7 +153,7 @@ function drawPlayer(
 export function renderLobby(
   canvas: HTMLCanvasElement,
   state: LobbyState,
-  { ownSessionId, floor = null, wall = null, character = null }: RenderOptions,
+  { ownSessionId, floor = null, wall = null, character = null, vision = null }: RenderOptions,
 ): void {
   const context = canvas.getContext('2d');
   if (!context) return;
@@ -178,9 +189,16 @@ export function renderLobby(
   });
 
   for (const cell of drawOrder(state.width, state.height) ) {
+    const visible = !vision || vision.visible(cell.x, cell.y);
+    // De lo que nunca se vio no se dibuja nada, ni el rombo de alambre: el
+    // contorno de una sala ya diría dónde está.
+    if (!visible && vision && !vision.explored(cell.x, cell.y)) continue;
+    const niebla = visible ? 1 : FOG_DIM;
+
     // La roca maciza no se dibuja: en una mazmorra es casi todo el mapa.
     const pared = esPared(state, cell.x, cell.y);
     if (!pared) {
+      context.globalAlpha = niebla;
       if (floor) {
         const pos = placeTile(cell.x, cell.y, floor.anchorX, floor.anchorY);
         context.drawImage(floor.bitmap, pos.x, pos.y);
@@ -188,6 +206,7 @@ export function renderLobby(
         const { x, y } = gridToScreen(cell.x, cell.y);
         strokeDiamond(context, x, y);
       }
+      context.globalAlpha = 1;
     }
 
     // Solo las caras del fondo que dan a una sala; las cercanas taparían el
@@ -195,11 +214,14 @@ export function renderLobby(
     if (wall && pared && shouldDrawWall((x, y) => !esPared(state, x, y), cell.x, cell.y)) {
       const pos = placeTile(cell.x, cell.y, wall.anchorX, wall.anchorY);
       const tapando = jugadores.some(({ player }) => hidesCell(cell.x, cell.y, player.x, player.y));
-      if (tapando) context.globalAlpha = WALL_FADE;
+      context.globalAlpha = Math.min(niebla, tapando ? WALL_FADE : 1);
       context.drawImage(wall.bitmap, pos.x, pos.y);
       context.globalAlpha = 1;
     }
 
+    // A nadie se lo dibuja en una celda que no se esté viendo: lo explorado es
+    // el mapa que uno recuerda, no un rastreador de rivales.
+    if (!visible) continue;
     for (const { player, sessionId } of porCelda.get(`${cell.x},${cell.y}`) ?? []) {
       drawPlayer(context, player, sessionId === ownSessionId, character ? character(player, sessionId) : null);
     }

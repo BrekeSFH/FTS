@@ -9,6 +9,22 @@ import { Client, type Room } from '@colyseus/sdk';
 
 export const LOBBY_ROOM = 'lobby';
 
+/**
+ * Mensaje con el que el servidor manda qué ve el jugador: una celda por
+ * carácter, `1` si se ve. Es por jugador, así que no va en el estado.
+ */
+export const VISION_MESSAGE = 'vision';
+
+/**
+ * Lo que manda el servidor en ese mensaje. Trae el ancho porque sin él la
+ * máscara no se puede indexar, y puede llegar antes que el primer estado.
+ */
+export interface VisionMessage {
+  width: number;
+  /** Una celda por carácter, fila por fila. `1` es visible. */
+  cells: string;
+}
+
 /** Lo que el cliente necesita de cada jugador. */
 export interface LobbyPlayer {
   x: number;
@@ -61,6 +77,22 @@ export async function connectToLobby(name: string, endpoint = defaultEndpoint())
 
 export function sendStep(room: LobbyRoom, step: Step): void {
   room.send('move', step);
+}
+
+/** Queda avisado cada vez que cambia lo que el jugador ve. */
+export function onVision(room: LobbyRoom, handler: (vision: VisionMessage) => void): void {
+  room.onMessage<VisionMessage>(VISION_MESSAGE, handler);
+}
+
+/**
+ * Pide la máscara de visión.
+ *
+ * El servidor ya la empuja al entrar, pero ese empujón sale mientras el
+ * cliente todavía se está enganchando y puede no encontrar a nadie
+ * escuchando. Pedirla después de registrar el handler cierra esa ventana.
+ */
+export function requestVision(room: LobbyRoom): void {
+  room.send(VISION_MESSAGE);
 }
 
 /** Teclas de movimiento: flechas y WASD, con diagonales. */

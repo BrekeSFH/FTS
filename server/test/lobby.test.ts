@@ -7,7 +7,14 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { LOBBY_ROOM, createServer } from '../src/createServer';
 import { DEFAULT_FACING, facingFromStep } from '../src/rooms/direction';
 import { WALL, isBlocked } from '../src/rooms/map';
-import { GRID_HEIGHT, GRID_WIDTH, type LobbyRoom, sanitizeName } from '../src/rooms/LobbyRoom';
+import {
+  GRID_HEIGHT,
+  GRID_WIDTH,
+  type LobbyRoom,
+  VISION_MESSAGE,
+  sanitizeName,
+} from '../src/rooms/LobbyRoom';
+import { isVisible } from '../src/rooms/vision';
 
 let colyseus: ColyseusTestServer;
 
@@ -244,5 +251,77 @@ describe('lobby', () => {
     for (const [, player] of room.state.players) {
       expect(isBlocked(room.map, player.x, player.y), `jugador en ${player.x},${player.y}`).toBe(false);
     }
+  });
+});
+
+describe('visión', () => {
+  it('la máscara cubre el mapa y marca la celda propia', async () => {
+    const room = await colyseus.createRoom<LobbyRoom>(LOBBY_ROOM);
+    const client = await colyseus.connectTo(room);
+    const yo = room.state.players.get(client.sessionId)!;
+
+    const mask = room.visionFor(client.sessionId)!;
+    expect(mask).toHaveLength(GRID_WIDTH * GRID_HEIGHT);
+    expect(isVisible(mask, GRID_WIDTH, yo.x, yo.y)).toBe(true);
+  });
+
+  it('no hay máscara para quien no está en la sala', async () => {
+    const room = await colyseus.createRoom<LobbyRoom>(LOBBY_ROOM);
+    expect(room.visionFor('nadie')).toBeNull();
+  });
+
+  it('nunca se ve toda la mazmorra de una vez', async () => {
+    // Si la máscara marcara todo, la niebla no estaría haciendo nada.
+    const room = await colyseus.createRoom<LobbyRoom>(LOBBY_ROOM);
+    const client = await colyseus.connectTo(room);
+    const mask = room.visionFor(client.sessionId)!;
+    expect([...mask].filter((c) => c === '0').length).toBeGreaterThan(0);
+  });
+
+  it('el cliente la recibe cuando la pide', async () => {
+    const room = await colyseus.createRoom<LobbyRoom>(LOBBY_ROOM);
+    const client = await colyseus.connectTo(room);
+
+    const llegada = client.waitForMessage(VISION_MESSAGE);
+    client.send(VISION_MESSAGE);
+    expect(await llegada).toEqual({ width: GRID_WIDTH, cells: room.visionFor(client.sessionId) });
+  });
+
+  it('llega una máscara nueva al moverse', async () => {
+    const room = await colyseus.createRoom<LobbyRoom>(LOBBY_ROOM);
+    const client = await colyseus.connectTo(room);
+    const yo = room.state.players.get(client.sessionId)!;
+
+    // Algún paso que el servidor acepte: el de al lado puede ser pared.
+    const paso = [
+      { dx: 1, dy: 0 },
+      { dx: 0, dy: 1 },
+      { dx: -1, dy: 0 },
+      { dx: 0, dy: -1 },
+    ].find(({ dx, dy }) => !isBlocked(room.map, yo.x + dx, yo.y + dy));
+    expect(paso, 'el spawn tiene que tener alguna salida').toBeDefined();
+
+    const llegada = client.waitForMessage(VISION_MESSAGE);
+    client.send('move', paso);
+    const { width, cells } = await llegada;
+    expect(width).toBe(GRID_WIDTH);
+    expect(isVisible(cells, width, yo.x + paso!.dx, yo.y + paso!.dy)).toBe(true);
+  });
+
+  it('girar contra una pared no manda máscara nueva', async () => {
+    const room = await colyseus.createRoom<LobbyRoom>(LOBBY_ROOM);
+    const client = await colyseus.connectTo(room);
+    const yo = room.state.players.get(client.sessionId)!;
+
+    const contra = [
+      { dx: 1, dy: 0 },
+      { dx: 0, dy: 1 },
+      { dx: -1, dy: 0 },
+      { dx: 0, dy: -1 },
+    ].find(({ dx, dy }) => isBlocked(room.map, yo.x + dx, yo.y + dy));
+    expect(contra, 'el spawn tiene que estar contra alguna pared').toBeDefined();
+
+    client.send('move', contra);
+    await expect(client.waitForMessage(VISION_MESSAGE, 300)).rejects.toThrow();
   });
 });
