@@ -8,7 +8,7 @@
  */
 import { Client, Room } from '@colyseus/core';
 import { DEFAULT_FACING, facingFromStep } from './direction';
-import { generateRoom, isBlocked, type GameMap } from './map';
+import { floorCells, generateMap, isBlocked, type GeneratedMap } from './map';
 import { LobbyState, MapSchema, Player, type LobbyStateType } from './state';
 
 /** En Colyseus 0.18 el genérico de `Room` describe la sala, no solo el estado. */
@@ -19,6 +19,9 @@ export const GRID_WIDTH = 32;
 export const GRID_HEIGHT = 24;
 /** Tope de jugadores en el lobby. */
 export const MAX_CLIENTS = 32;
+
+/** Salas chicas y varias: en 32x24 entra una mazmorra modesta. */
+const MAP_OPTIONS = { rooms: 5, minRoom: 4, maxRoom: 7 };
 
 const MAX_NAME_LENGTH = 16;
 
@@ -54,11 +57,16 @@ export class LobbyRoom extends Room<LobbyRoomOptions> {
   maxClients = MAX_CLIENTS;
 
   /** El mapa generado, para consultarlo sin releer la cadena del estado. */
-  map: GameMap = generateRoom(GRID_WIDTH, GRID_HEIGHT, 1);
+  map: GeneratedMap = generateMap(GRID_WIDTH, GRID_HEIGHT, 1, MAP_OPTIONS);
 
   override onCreate(options: { seed?: number } = {}): void {
     // Semilla al azar salvo que se pida una, que es lo que usan los tests.
-    this.map = generateRoom(GRID_WIDTH, GRID_HEIGHT, options.seed ?? (Date.now() & 0xffff) + 1);
+    this.map = generateMap(
+      GRID_WIDTH,
+      GRID_HEIGHT,
+      options.seed ?? (Date.now() & 0xffff) + 1,
+      MAP_OPTIONS,
+    );
     this.state = new LobbyState({
       width: this.map.width,
       height: this.map.height,
@@ -126,23 +134,22 @@ export class LobbyRoom extends Room<LobbyRoomOptions> {
     return false;
   }
 
-  /** Primera celda libre recorriendo desde el centro hacia afuera. */
+  /**
+   * Primera celda libre de alguna sala. Se recorren las salas en orden en vez
+   * de buscar desde el centro del mapa: con pasillos, el centro suele ser roca.
+   */
   private findFreeCell(): { x: number; y: number } | null {
-    const cx = Math.floor(this.state.width / 2);
-    const cy = Math.floor(this.state.height / 2);
-    const maxRing = Math.max(this.state.width, this.state.height);
-
-    for (let ring = 0; ring < maxRing; ring++) {
-      for (let dy = -ring; dy <= ring; dy++) {
-        for (let dx = -ring; dx <= ring; dx++) {
-          // Solo el borde del anillo: el interior ya se recorrió.
-          if (ring > 0 && Math.abs(dx) !== ring && Math.abs(dy) !== ring) continue;
-          const x = cx + dx;
-          const y = cy + dy;
-          if (isBlocked(this.map, x, y)) continue;
-          if (!this.isOccupied(x, y)) return { x, y };
+    for (const room of this.map.rooms) {
+      for (let y = room.y; y < room.y + room.height; y++) {
+        for (let x = room.x; x < room.x + room.width; x++) {
+          if (!isBlocked(this.map, x, y) && !this.isOccupied(x, y)) return { x, y };
         }
       }
+    }
+    // Las salas llenas no deberían pasar con el tope de jugadores, pero un
+    // pasillo siempre es mejor que no dejar entrar a nadie.
+    for (const { x, y } of floorCells(this.map)) {
+      if (!this.isOccupied(x, y)) return { x, y };
     }
     return null;
   }
