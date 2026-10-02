@@ -22,9 +22,10 @@ describe('shouldDrawWall', () => {
     expect(shouldDrawWall(esPiso, 0, 1)).toBe(true);
   });
 
-  it('omite la esquina de atrás, que no da a ninguna sala', () => {
-    // (0,0) tiene roca tanto en x+1 como en y+1: no es cara de nada.
-    expect(shouldDrawWall(esPiso, 0, 0)).toBe(false);
+  it('dibuja el vértice de atrás, que junta los dos tramos', () => {
+    // (0,0) tiene roca en x+1 y en y+1, y piso solo en diagonal. Omitirlo
+    // —que era lo que se hacía— dejaba la esquina de la sala abierta.
+    expect(shouldDrawWall(esPiso, 0, 0)).toBe(true);
   });
 
   it('omite la roca del lado cercano, que taparía la sala', () => {
