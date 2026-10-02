@@ -80,12 +80,22 @@ export function siblingPaths(path: string): Record<WallSuffix, string> | null {
  * Vacío si no hay que dibujar nada: la roca que solo tiene piso detrás sería
  * la pared cercana y taparía la sala, y la rodeada de roca no la ve nadie.
  *
- * Una esquina interior —piso en los dos lados— muestra las dos caras.
+ * La diagonal cuenta. El vértice de una sala no tiene piso en ninguno de sus
+ * dos lados —solo en diagonal—, así que mirando únicamente los vecinos
+ * rectos quedaba sin dibujar y la esquina abierta. Con la diagonal, el
+ * vértice muestra las dos caras y los dos tramos se juntan.
  */
 export function wallFaces(isFloor: IsFloor, x: number, y: number): WallSuffix[] {
+  const alLadoX = isFloor(x + 1, y);
+  const alLadoY = isFloor(x, y + 1);
+  // Solo cuando no hay piso en ninguno de los dos lados rectos: en medio de
+  // un tramo la diagonal también da a la sala, y contarla ahí agregaría una
+  // cara perpendicular que no corresponde.
+  const vertice = !alLadoX && !alLadoY && isFloor(x + 1, y + 1);
+
   const faces: WallSuffix[] = [];
-  if (isFloor(x, y + 1)) faces.push('SW');
-  if (isFloor(x + 1, y)) faces.push('SE');
+  if (alLadoY || vertice) faces.push('SW');
+  if (alLadoX || vertice) faces.push('SE');
   return faces;
 }
 

@@ -77,17 +77,29 @@ describe('wallFaces', () => {
     expect(wallFaces(sala, 2, 0)).toEqual(['SW']);
   });
 
-  it('las dos esquinas de atrás usan caras distintas', () => {
-    // Si las dos dieran lo mismo, todas las paredes mirarían igual, que es
+  it('los dos tramos de atrás usan caras distintas', () => {
+    // Si los dos dieran lo mismo, todas las paredes mirarían igual, que es
     // justo el error que esto arregla.
-    expect(wallFaces(sala, 0, 1)).toEqual(['SE']);
-    expect(wallFaces(sala, 1, 0)).toEqual(['SW']);
+    expect(wallFaces(sala, 0, 2)).not.toEqual(wallFaces(sala, 2, 0));
   });
 
   it('una celda con piso en los dos ejes dibuja las dos caras', () => {
     // Un pasillo en L: piso solo en +x y +y de la celda (0,0).
     const esquina: IsFloor = (x, y) => (x === 1 && y === 0) || (x === 0 && y === 1);
     expect(wallFaces(esquina, 0, 0)).toEqual(['SW', 'SE']);
+  });
+
+  it('el vértice de una sala cierra la esquina con las dos caras', () => {
+    // (0,0) no tiene piso en (1,0) ni en (0,1), solo en la diagonal (1,1).
+    // Sin esto quedaba sin dibujar y la esquina abierta.
+    expect(wallFaces(sala, 0, 0)).toEqual(['SW', 'SE']);
+  });
+
+  it('en medio de un tramo la diagonal no agrega nada', () => {
+    // (0,1) tiene piso en (1,1) y también en la diagonal (1,2): si la
+    // diagonal contara siempre, se dibujaría una cara perpendicular de más.
+    expect(wallFaces(sala, 0, 1)).toEqual(['SE']);
+    expect(wallFaces(sala, 1, 0)).toEqual(['SW']);
   });
 
   it('la roca con piso solo detrás no se dibuja', () => {
