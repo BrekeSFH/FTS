@@ -79,7 +79,9 @@ Con el servidor levantado y el cliente en `npm run dev`, abrí http://localhost:
 
 El GDD exige autoridad del servidor en todos los modos, así que **el cliente no mueve a nadie**: manda la intención de dar un paso y el servidor decide. Valida que sea un paso de una celda en alguna de las ocho direcciones, que el destino no sea pared y que no esté ocupado.
 
-El mapa también lo genera el servidor: una sala con paredes en el perímetro y algunos obstáculos adentro, con un generador reproducible por semilla. Se sincroniza como una cadena de un carácter por celda. El cliente dibuja las paredes donde el mapa dice, no donde se le ocurre, y nadie aparece dentro de una. Lo que se dibuja sale siempre del estado sincronizado, nunca de una predicción local.
+El mapa también lo genera el servidor: salas rectangulares conectadas por pasillos en L, con un generador reproducible por semilla. Se sincroniza como una cadena de un carácter por celda. Nadie aparece dentro de la roca y no se puede atravesarla.
+
+Del lado del dibujo, la roca maciza no se pinta: en una mazmorra es casi todo el mapa. Solo se dibujan las caras que dan a una sala, y únicamente las del fondo — la cámara mira desde arriba a la derecha, así que las caras cercanas se omiten para poder ver adentro. Una pared que igual tape a alguien se desvanece mientras lo esté tapando. Lo que se dibuja sale siempre del estado sincronizado, nunca de una predicción local.
 
 La grilla del lobby es isométrica, con la misma proyección que usa el juego. Las medidas no se supusieron: salieron de medir la silueta de los tiles de piso. En un tile de 73×37 el ápice cae en la columna 36 y cada fila crece 4 px, dos por lado, lo que describe un rombo de **72×36 de paso**; la imagen es un píxel más grande en cada eje para que los vecinos se solapen y no queden costuras.
 
@@ -99,6 +101,7 @@ Código relevante:
 - `server/src/rooms/LobbyRoom.ts`: la sala y las reglas de movimiento.
 - `server/src/rooms/map.ts`: generación del mapa y consulta de celdas bloqueadas.
 - `client/src/iso/projection.ts`: la proyección y el orden de dibujado.
+- `client/src/iso/occlusion.ts`: qué paredes se dibujan y cuáles estorban.
 - `client/src/iso/tileset.ts`: decodificación y caché de los tiles.
 - `client/src/iso/spriteset.ts`: lo mismo para los sprites, con el ancla sacada del rectángulo.
 - `server/src/createServer.ts`: depende de `@colyseus/core` y `@colyseus/ws-transport` en vez del paquete paraguas `colyseus`, que para un servidor headless sobra y arrastra monitor y playground.

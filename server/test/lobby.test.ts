@@ -74,13 +74,22 @@ describe('lobby', () => {
 
     const antes = room.state.players.get(uno.sessionId)!;
     const [x, y] = [antes.x, antes.y];
-    uno.send('move', { dx: 1, dy: 0 });
+    // Con paredes no se puede dar por hecho que haya paso a la derecha.
+    const paso = [
+      { dx: 1, dy: 0 },
+      { dx: -1, dy: 0 },
+      { dx: 0, dy: 1 },
+      { dx: 0, dy: -1 },
+    ].find((p) => !isBlocked(room.map, x + p.dx, y + p.dy) && !room.isOccupied(x + p.dx, y + p.dy));
+    expect(paso, 'el jugador debería tener alguna celda libre al lado').toBeDefined();
+    uno.send('move', paso!);
 
-    await waitFor(
-      () => dos.state.players.get(uno.sessionId)?.x === x + 1,
-      'el segundo ve moverse al primero',
-    );
-    expect(dos.state.players.get(uno.sessionId)!.y).toBe(y);
+    // Hay que esperar los dos ejes: con un paso vertical la X no cambia y la
+    // espera terminaría antes de que llegue nada.
+    await waitFor(() => {
+      const visto = dos.state.players.get(uno.sessionId);
+      return visto?.x === x + paso!.dx && visto?.y === y + paso!.dy;
+    }, 'el segundo ve moverse al primero');
   });
 
   it('rechaza los movimientos que no son un paso válido', async () => {

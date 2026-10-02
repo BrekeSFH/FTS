@@ -21,6 +21,7 @@ import {
   gridToScreen,
   placeTile,
 } from '../iso/projection';
+import { hidesCell, shouldDrawWall } from '../iso/occlusion';
 import type { LobbyPlayer, LobbyState } from './connection';
 
 /** Un tile listo para dibujar, con el punto que se apoya en la celda. */
@@ -49,8 +50,9 @@ export interface RenderOptions {
 /** Carácter con el que el servidor marca una pared. */
 const WALL = '#';
 
-/** Si el mapa declara pared en esa celda. */
+/** Si el mapa declara pared en esa celda. Fuera del mapa cuenta como roca. */
 function esPared(state: LobbyState, gx: number, gy: number): boolean {
+  if (gx < 0 || gy < 0 || gx >= state.width || gy >= state.height) return true;
   return state.cells?.[gy * state.width + gx] === WALL;
 }
 
@@ -58,6 +60,8 @@ function esPared(state: LobbyState, gx: number, gy: number): boolean {
 const DOT_RADIUS = 7;
 /** Sitio que se deja arriba para que no se corte un personaje de la fila del fondo. */
 const CHARACTER_HEADROOM = 80;
+/** Opacidad de una pared que está tapando a alguien. */
+const WALL_FADE = 0.28;
 
 /** Cuánto sobresale un tile de su celda, para agrandar el canvas. */
 function overhang(tile: PlacedTile | null | undefined): { top: number; left: number } {
@@ -163,8 +167,10 @@ export function renderLobby(
   context.translate(-bounds.minX, -bounds.minY);
 
   // Un jugador puede estar en cualquier celda; se indexan para intercalarlos.
+  const jugadores: Array<{ player: LobbyPlayer; sessionId: string }> = [];
   const porCelda = new Map<string, Array<{ player: LobbyPlayer; sessionId: string }>>();
   state.players.forEach((player, sessionId) => {
+    jugadores.push({ player, sessionId });
     const clave = `${player.x},${player.y}`;
     const lista = porCelda.get(clave);
     if (lista) lista.push({ player, sessionId });
@@ -172,19 +178,26 @@ export function renderLobby(
   });
 
   for (const cell of drawOrder(state.width, state.height) ) {
-    if (floor) {
-      const pos = placeTile(cell.x, cell.y, floor.anchorX, floor.anchorY);
-      context.drawImage(floor.bitmap, pos.x, pos.y);
-    } else {
-      const { x, y } = gridToScreen(cell.x, cell.y);
-      strokeDiamond(context, x, y);
+    // La roca maciza no se dibuja: en una mazmorra es casi todo el mapa.
+    const pared = esPared(state, cell.x, cell.y);
+    if (!pared) {
+      if (floor) {
+        const pos = placeTile(cell.x, cell.y, floor.anchorX, floor.anchorY);
+        context.drawImage(floor.bitmap, pos.x, pos.y);
+      } else {
+        const { x, y } = gridToScreen(cell.x, cell.y);
+        strokeDiamond(context, x, y);
+      }
     }
 
-    // El piso va debajo de todo, también bajo las paredes: así no quedan
-    // huecos si el tile de pared no cubre el rombo entero.
-    if (wall && esPared(state, cell.x, cell.y)) {
+    // Solo las caras del fondo que dan a una sala; las cercanas taparían el
+    // interior. Las que quedan se desvanecen mientras escondan a alguien.
+    if (wall && pared && shouldDrawWall((x, y) => !esPared(state, x, y), cell.x, cell.y)) {
       const pos = placeTile(cell.x, cell.y, wall.anchorX, wall.anchorY);
+      const tapando = jugadores.some(({ player }) => hidesCell(cell.x, cell.y, player.x, player.y));
+      if (tapando) context.globalAlpha = WALL_FADE;
       context.drawImage(wall.bitmap, pos.x, pos.y);
+      context.globalAlpha = 1;
     }
 
     for (const { player, sessionId } of porCelda.get(`${cell.x},${cell.y}`) ?? []) {
