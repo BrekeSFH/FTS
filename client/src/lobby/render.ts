@@ -35,13 +35,8 @@ export interface RenderOptions {
   ownSessionId: string | null;
   /** Tile de piso. Sin esto se dibujan rombos de alambre. */
   floor?: PlacedTile | null;
-  /** Tile que se repite donde `wallAt` diga. */
+  /** Tile con el que se dibujan las paredes que declara el mapa. */
   wall?: PlacedTile | null;
-  /**
-   * Qué celdas llevan pared. Por defecto los dos bordes del fondo, que es
-   * donde van las paredes de una sala vista en isométrica.
-   */
-  wallAt?: (gx: number, gy: number) => boolean;
   /**
    * Con qué sprite dibujar a cada jugador. Devolver `null` deja el punto.
    *
@@ -51,7 +46,13 @@ export interface RenderOptions {
   character?: ((player: LobbyPlayer, sessionId: string) => PlacedTile | null) | null;
 }
 
-const BACK_EDGES = (gx: number, gy: number): boolean => gx === 0 || gy === 0;
+/** Carácter con el que el servidor marca una pared. */
+const WALL = '#';
+
+/** Si el mapa declara pared en esa celda. */
+function esPared(state: LobbyState, gx: number, gy: number): boolean {
+  return state.cells?.[gy * state.width + gx] === WALL;
+}
 
 /** Radio del punto que representa a un jugador. */
 const DOT_RADIUS = 7;
@@ -137,7 +138,7 @@ function drawPlayer(
 export function renderLobby(
   canvas: HTMLCanvasElement,
   state: LobbyState,
-  { ownSessionId, floor = null, wall = null, wallAt = BACK_EDGES, character = null }: RenderOptions,
+  { ownSessionId, floor = null, wall = null, character = null }: RenderOptions,
 ): void {
   const context = canvas.getContext('2d');
   if (!context) return;
@@ -179,7 +180,9 @@ export function renderLobby(
       strokeDiamond(context, x, y);
     }
 
-    if (wall && wallAt(cell.x, cell.y)) {
+    // El piso va debajo de todo, también bajo las paredes: así no quedan
+    // huecos si el tile de pared no cubre el rombo entero.
+    if (wall && esPared(state, cell.x, cell.y)) {
       const pos = placeTile(cell.x, cell.y, wall.anchorX, wall.anchorY);
       context.drawImage(wall.bitmap, pos.x, pos.y);
     }
