@@ -55,10 +55,12 @@
       </section>
 
       <section id="lobby">
-        <h2>Lobby multijugador</h2>
+        <h2>Multijugador</h2>
         <p class="hint">
-          Puntos moviéndose en una grilla isométrica, sincronizados por el servidor. Abrí
-          esta página en dos pestañas para ver los dos puntos. Si abrís un <code>.BOS</code>
+          Dos salas sobre el mismo tablero isométrico, sincronizadas por el servidor. El
+          <em>lobby</em> es en tiempo real; la <em>Vault</em> es por turnos, con puntos de
+          acción, reloj de ronda y orden de Iniciativa cuando dos bandos se ven. Abrí esta
+          página en dos pestañas para jugar contra vos mismo. Si abrís un <code>.BOS</code>
           con tiles, los botones <em>Piso</em> y <em>Pared</em> de cada <code>.til</code>, y <em>Personaje</em> de cada <code>.spr</code>, los traen acá.
         </p>
         <div class="actions">
@@ -66,15 +68,27 @@
             Nombre
             <input id="lobby-name" type="text" maxlength="16" placeholder="Raider" />
           </label>
+          <label>
+            Sala
+            <select id="lobby-room">
+              <option value="lobby">Lobby (tiempo real)</option>
+              <option value="vault">Vault (por turnos)</option>
+            </select>
+          </label>
           <button id="lobby-connect" type="button">Conectar</button>
           <span id="lobby-status" class="muted" role="status"></span>
         </div>
         <div id="lobby-board" hidden>
-          <button id="lobby-fullscreen" type="button">Pantalla completa</button>
+          <div class="actions">
+            <button id="lobby-fullscreen" type="button">Pantalla completa</button>
+            <button id="lobby-end-turn" type="button" hidden>Terminar turno</button>
+            <span id="lobby-turn" class="turn" role="status" hidden></span>
+          </div>
           <canvas id="lobby-canvas"></canvas>
           <p class="hint">
-            Flechas o WASD para moverte; Q, E, Z y C para las diagonales. En pantalla
-            completa, <kbd>Esc</kbd> para salir.
+            Flechas o WASD para moverte; Q, E, Z y C para las diagonales. En la Vault cada
+            paso gasta un punto de acción y el turno se cierra solo al quedarte sin ellos.
+            En pantalla completa, <kbd>Esc</kbd> para salir.
           </p>
         </div>
       </section>

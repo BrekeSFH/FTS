@@ -437,6 +437,9 @@ const lobby = setupLobby({
   board: $('lobby-board'),
   canvas: $<HTMLCanvasElement>('lobby-canvas'),
   fullscreen: $<HTMLButtonElement>('lobby-fullscreen'),
+  room: $<HTMLSelectElement>('lobby-room'),
+  turn: $('lobby-turn'),
+  endTurn: $<HTMLButtonElement>('lobby-end-turn'),
 });
 
 // Comodidad de desarrollo: si hay assets de prueba, el lobby arranca con

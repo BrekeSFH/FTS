@@ -244,3 +244,10 @@ pre {
 #lobby-board:fullscreen > #lobby-fullscreen:focus-visible {
   opacity: 1;
 }
+
+/* La línea del turno en la Vault: tiene que leerse de un vistazo sin robarle
+   sitio al tablero. */
+.turn {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
