@@ -1,5 +1,6 @@
 import { BosArchive, UnsupportedArchiveError, type BosEntry } from './bos/archive';
-import { pickBosFile, supportsFileSystemAccess } from './bos/filePicker';
+import { matchesQuery } from './bos/filter';
+import { pickBosFiles } from './bos/filePicker';
 import { toHex } from './bos/signature';
 import {
   describeSprite,
@@ -51,9 +52,7 @@ const lobbySources: { floor: string | null; wall: string | null; character: stri
   character: null,
 };
 
-ui.api.textContent = supportsFileSystemAccess()
-  ? 'Usando File System Access API'
-  : 'Usando selector de archivos clásico';
+ui.api.textContent = 'Podés elegir varios archivos a la vez';
 
 function setStatus(message: string, isError = false): void {
   ui.status.textContent = message;
@@ -92,36 +91,58 @@ function el<K extends keyof HTMLElementTagNameMap>(
  */
 const cacheKey = (archive: BosArchive, path: string): string => `${archive.name}#${path}`;
 
-async function openArchive(): Promise<void> {
-  const file = await pickBosFile();
-  if (!file) return;
+/** Evita que dos aperturas se pisen si el archivo tarda en leerse. */
+let abriendo = false;
 
-  setStatus(`Leyendo ${file.name}…`);
-  ui.preview.hidden = true;
+async function openArchives(): Promise<void> {
+  if (abriendo) return;
+  abriendo = true;
+  ui.pick.disabled = true;
+  setStatus('Elegí uno o varios archivos…');
 
+  let files: File[] = [];
   try {
-    // Volver a abrir el mismo archivo lo reemplaza en vez de duplicarlo.
-    const abierto = archives.find((a) => a.name === file.name);
-    if (abierto) await closeArchive(abierto);
-
-    const archive = await BosArchive.open(file);
-    archives.push(archive);
-    current = archive;
-    renderArchives();
-    renderArchive(archive);
-    setStatus('');
+    files = await pickBosFiles();
   } catch (err) {
     console.error(err);
-    if (err instanceof UnsupportedArchiveError) {
-      setStatus(
-        `${file.name} no parece un ZIP. Primeros bytes: ${err.report.headerHex}. ` +
-          'Compartí esta línea para analizar el formato.',
-        true,
+    const e = err as Error;
+    setStatus(`No se pudo abrir el selector de archivos: ${e.name}: ${e.message}`, true);
+    return;
+  } finally {
+    abriendo = false;
+    ui.pick.disabled = false;
+    if (files.length === 0) setStatus('');
+  }
+  if (files.length === 0) return;
+
+  ui.preview.hidden = true;
+  const fallidos: string[] = [];
+
+  for (const file of files) {
+    // Los .BOS grandes tardan; decir cuál se está leyendo evita que parezca
+    // que el botón no hizo nada.
+    setStatus(`Leyendo ${file.name}…`);
+    try {
+      // Volver a abrir el mismo archivo lo reemplaza en vez de duplicarlo.
+      const abierto = archives.find((a) => a.name === file.name);
+      if (abierto) await closeArchive(abierto);
+
+      const archive = await BosArchive.open(file);
+      archives.push(archive);
+      current = archive;
+    } catch (err) {
+      console.error(err);
+      fallidos.push(
+        err instanceof UnsupportedArchiveError
+          ? `${file.name} no parece un ZIP (cabecera: ${err.report.headerHex})`
+          : `${file.name}: ${(err as Error).message}`,
       );
-    } else {
-      setStatus(`No se pudo leer ${file.name}: ${(err as Error).message}`, true);
     }
   }
+
+  renderArchives();
+  if (current) renderArchive(current);
+  setStatus(fallidos.length ? `No se pudieron abrir: ${fallidos.join('; ')}` : '', fallidos.length > 0);
 }
 
 /**
@@ -211,16 +232,10 @@ function renderArchive(archive: BosArchive): void {
   renderEntries();
 }
 
-function matches(entry: BosEntry, query: string): boolean {
-  if (!query) return true;
-  if (query.startsWith('.') && !query.includes('/')) return entry.extension === query.slice(1);
-  return entry.path.toLowerCase().includes(query);
-}
-
 function renderEntries(): void {
   if (!current) return;
   const query = ui.filter.value.trim().toLowerCase();
-  const filtered = current.files.filter((e) => matches(e, query));
+  const filtered = current.files.filter((e) => matchesQuery(e, query));
   const shown = filtered.slice(0, MAX_ROWS);
 
   ui.count.textContent =
@@ -409,7 +424,7 @@ async function downloadEntry(entry: BosEntry): Promise<void> {
   }
 }
 
-ui.pick.addEventListener('click', () => void openArchive());
+ui.pick.addEventListener('click', () => void openArchives());
 ui.filter.addEventListener('input', renderEntries);
 
 const lobby = setupLobby({
