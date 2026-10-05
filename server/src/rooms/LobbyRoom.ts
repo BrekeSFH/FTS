@@ -8,7 +8,7 @@
  */
 import { Client, Room } from '@colyseus/core';
 import { DEFAULT_FACING, facingFromStep } from './direction';
-import { floorCells, generateMap, isBlocked, type GeneratedMap } from './map';
+import { floorCells, generateMap, isBlocked, randomSeed, type GeneratedMap } from './map';
 import { LobbyState, MapSchema, Player, type LobbyStateType } from './state';
 import { SIGHT_RADIUS, visibleMask } from './vision';
 
@@ -82,16 +82,13 @@ export class LobbyRoom extends Room<LobbyRoomOptions> {
 
   override onCreate(options: { seed?: number } = {}): void {
     // Semilla al azar salvo que se pida una, que es lo que usan los tests.
-    this.map = generateMap(
-      GRID_WIDTH,
-      GRID_HEIGHT,
-      options.seed ?? (Date.now() & 0xffff) + 1,
-      MAP_OPTIONS,
-    );
+    const seed = options.seed ?? randomSeed();
+    this.map = generateMap(GRID_WIDTH, GRID_HEIGHT, seed, MAP_OPTIONS);
     this.state = new LobbyState({
       width: this.map.width,
       height: this.map.height,
       cells: this.map.cells,
+      tileSeed: seed,
       players: new MapSchema(),
     });
 

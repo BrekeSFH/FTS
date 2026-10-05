@@ -60,6 +60,25 @@ describe('lobby', () => {
     expect([client.state.width, client.state.height]).toEqual([GRID_WIDTH, GRID_HEIGHT]);
   });
 
+  it('publica la semilla con la que el cliente elige sus tiles', async () => {
+    // El servidor no puede mandar los tiles —no aloja assets del juego—, así
+    // que manda la semilla y cada cliente resuelve su propio catálogo igual.
+    const room = await colyseus.createRoom<LobbyRoom>(LOBBY_ROOM, { seed: 4321 });
+    const client = await colyseus.connectTo(room);
+    expect(client.state.tileSeed).toBe(4321);
+  });
+
+  it('dos salas distintas no comparten semilla por defecto', async () => {
+    const semillas = new Set<number>();
+    for (let i = 0; i < 3; i++) {
+      const room = await colyseus.createRoom<LobbyRoom>(LOBBY_ROOM);
+      semillas.add(room.state.tileSeed);
+      await room.disconnect();
+    }
+    // Con la semilla sacada del reloj podrían repetirse, pero no las tres.
+    expect(semillas.size).toBeGreaterThan(1);
+  });
+
   it('da a cada jugador una celda distinta y la comparte entre clientes', async () => {
     const room = await colyseus.createRoom<LobbyRoom>(LOBBY_ROOM);
     const uno = await colyseus.connectTo(room, { name: 'Uno' });

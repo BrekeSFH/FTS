@@ -50,6 +50,18 @@ function createRandom(seed: number): () => number {
   };
 }
 
+/**
+ * Una semilla para una instancia nueva.
+ *
+ * Sale de `Math.random` y no del reloj: dos salas creadas en el mismo
+ * milisegundo compartirían mazmorra y decoración. La reproducibilidad no se
+ * pierde, porque quien quiera repetir una instancia pasa la semilla a mano,
+ * que es lo que hacen los tests.
+ */
+export function randomSeed(): number {
+  return (Math.floor(Math.random() * 0xffff_ffff) >>> 0) || 1;
+}
+
 export function isBlocked(map: GameMap, x: number, y: number): boolean {
   if (x < 0 || y < 0 || x >= map.width || y >= map.height) return true;
   return map.cells[y * map.width + x] === WALL;

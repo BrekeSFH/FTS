@@ -28,6 +28,15 @@ export const LobbyState = schema(
     height: t.uint16(),
     /** Una celda por carácter, fila por fila; ver `map.ts`. */
     cells: t.string(),
+    /**
+     * Semilla con la que cada cliente elige sus tiles.
+     *
+     * El servidor no puede mandar los tiles: el modelo BYOG le prohíbe
+     * alojar assets del juego. Manda la semilla, y como todos resuelven el
+     * mismo catálogo de la misma manera, todos ven la misma mazmorra sin que
+     * un solo byte protegido pase por acá.
+     */
+    tileSeed: t.uint32(),
     players: t.map(Player),
   },
   'LobbyState',

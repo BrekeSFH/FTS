@@ -63,6 +63,11 @@ export interface LobbyState {
   height: number;
   /** El mapa: una celda por carácter, fila por fila. `#` es pared. */
   cells: string;
+  /**
+   * Semilla con la que elegir los tiles. La manda el servidor en vez de los
+   * tiles mismos: no puede alojar assets del juego.
+   */
+  tileSeed?: number;
   /** Ronda en curso. Solo en la Vault; en el lobby llega sin definir. */
   round?: number;
   /** Cuánto queda del turno, en milisegundos. Solo en la Vault. */

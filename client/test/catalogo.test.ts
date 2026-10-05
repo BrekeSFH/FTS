@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { completeness, familyPaths, groupBySet, parseTile } from '../src/tiles/catalogo';
+import {
+  completeness,
+  familyPaths,
+  groupBySet,
+  parseTile,
+  tilesetPlans,
+} from '../src/tiles/catalogo';
 
 const PARED = 'tiles/BOS/Bos WALLS/BOS_Wall_Metal_InteriorPlainB&D_X_1_NE.til';
 
@@ -125,5 +131,54 @@ describe('familyPaths', () => {
   it('ida y vuelta con parseTile', () => {
     const familia = parseTile(PARED)!.family;
     expect(familyPaths(familia).NE).toBe(PARED);
+  });
+});
+
+describe('tilesetPlans', () => {
+  /** Tres conjuntos usables, cada uno con varias familias de cada cosa. */
+  const rutas = ['A', 'B', 'C'].flatMap((set) => [
+    ...[1, 2, 3].map((n) => `x/${set}_Floor_Metal_PlateCentre_A_${n}_NE.til`),
+    ...[1, 2, 3].map((n) => `x/${set}_Wall_Metal_Plain_A_${n}_SE.til`),
+    ...[1, 2].map((n) => `x/${set}_Wall_Metal_PlainCORNER_A_${n}_SE.til`),
+  ]);
+
+  it('devuelve todos los conjuntos usables', () => {
+    const planes = tilesetPlans(rutas, 1);
+    expect(planes.map((p) => p.set).sort()).toEqual(['A', 'B', 'C']);
+    expect(planes[0].floors).toHaveLength(3);
+    expect(planes[0].walls).toHaveLength(3);
+    expect(planes[0].corners).toHaveLength(2);
+  });
+
+  it('la misma semilla da siempre lo mismo', () => {
+    // Es lo único que hace que dos jugadores vean la misma mazmorra.
+    expect(tilesetPlans(rutas, 1234)).toEqual(tilesetPlans(rutas, 1234));
+  });
+
+  it('el orden de las rutas no cambia el resultado', () => {
+    expect(tilesetPlans([...rutas].reverse(), 7)).toEqual(tilesetPlans(rutas, 7));
+  });
+
+  it('semillas distintas dan mazmorras distintas', () => {
+    const resumen = (seed: number) => {
+      const p = tilesetPlans(rutas, seed)[0];
+      return `${p.set}|${p.floors[0]}|${p.walls[0]}`;
+    };
+    const vistos = new Set(Array.from({ length: 24 }, (_, i) => resumen(i + 1)));
+    expect(vistos.size).toBeGreaterThan(4);
+  });
+
+  it('deja afuera lo que no arma un tablero', () => {
+    // Sin pared no hay mazmorra; sin esquina sí, que se cae a las dos caras.
+    const soloPiso = ['x/Z_Floor_Metal_PlateCentre_A_1_NE.til'];
+    expect(tilesetPlans(soloPiso, 1)).toEqual([]);
+
+    const sinEsquina = [...soloPiso, 'x/Z_Wall_Metal_Plain_A_1_SE.til'];
+    expect(tilesetPlans(sinEsquina, 1)).toHaveLength(1);
+    expect(tilesetPlans(sinEsquina, 1)[0].corners).toEqual([]);
+  });
+
+  it('sin rutas no hay planes', () => {
+    expect(tilesetPlans([], 42)).toEqual([]);
   });
 });

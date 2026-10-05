@@ -34,6 +34,13 @@ export interface LobbyElements {
   turn?: HTMLElement | null;
   /** Botón para cerrar el turno propio. Solo sirve en la Vault. */
   endTurn?: HTMLButtonElement | null;
+  /**
+   * Aviso de qué semilla de tiles usa la sala, al conectarse y si cambia.
+   *
+   * Quien conecta no sabe nada de archivos `.BOS`; de armar el juego de
+   * tiles con esa semilla se encarga el explorador, que sí.
+   */
+  onTileSeed?: (seed: number) => void;
 }
 
 export interface LobbyHandle {
@@ -62,6 +69,8 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
    * anterior no significa nada.
    */
   let fog = createFog();
+  /** Última semilla avisada, para no rearmar el tablero en cada parche. */
+  let tileSeed: number | null = null;
 
   /**
    * Cuándo arrancó el movimiento de cada jugador y dónde estaba.
@@ -92,6 +101,7 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
       vision: fog.empty ? null : fog,
     });
     actualizarTurno();
+    avisarSemilla();
   };
 
   /**
@@ -111,6 +121,14 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
       ui.endTurn.hidden = !salaPorTurnos();
       ui.endTurn.disabled = !hud.canEndTurn;
     }
+  };
+
+  /** Avisa la semilla de tiles la primera vez que llega, y si cambia. */
+  const avisarSemilla = (): void => {
+    const semilla = room?.state?.tileSeed;
+    if (semilla === undefined || semilla === tileSeed) return;
+    tileSeed = semilla;
+    ui.onTileSeed?.(semilla);
   };
 
   /** Si la sala elegida juega por turnos. */
@@ -153,6 +171,7 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     ui.connect.disabled = false;
     ui.connect.textContent = 'Conectar';
     if (ui.room) ui.room.disabled = false;
+    tileSeed = null;
     setStatus(reason, isError);
     actualizarTurno();
   };

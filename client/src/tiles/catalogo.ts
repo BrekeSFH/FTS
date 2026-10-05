@@ -184,3 +184,60 @@ export function familyPaths(family: string): Record<WallSuffix, string> {
   for (const suffix of WALL_SUFFIXES) out[suffix] = `${family}_${suffix}.til`;
   return out;
 }
+
+/** Las familias a probar para armar un tablero, en orden. */
+export interface TilesetPlan {
+  set: string;
+  /** Familias de piso, en orden de preferencia. */
+  floors: string[];
+  walls: string[];
+  corners: string[];
+}
+
+/** Rota una lista sin modificarla. Con lista vacía devuelve vacío. */
+function rotar<T>(items: readonly T[], veces: number): T[] {
+  if (items.length === 0) return [];
+  const desde = ((veces % items.length) + items.length) % items.length;
+  return [...items.slice(desde), ...items.slice(0, desde)];
+}
+
+/**
+ * Mezclador de la semilla.
+ *
+ * Rotar las tres listas con el mismo número daría combinaciones alineadas:
+ * el piso 2 siempre con la pared 2. Se deriva un número distinto por lista
+ * para que dos mazmorras seguidas no se parezcan.
+ */
+function derivar(seed: number, vuelta: number): number {
+  let x = (seed ^ (vuelta * 0x9e37_79b9)) >>> 0 || 1;
+  x ^= x << 13;
+  x >>>= 0;
+  x ^= x >> 17;
+  x ^= x << 5;
+  return x >>> 0;
+}
+
+/**
+ * Qué conjuntos probar para una semilla, en orden.
+ *
+ * El servidor manda la semilla y no los tiles: no puede alojar assets del
+ * juego. Como todos los clientes resuelven el mismo catálogo de la misma
+ * manera, con la misma instalación todos ven la misma mazmorra.
+ *
+ * Se devuelve una lista y no una elección porque el nombre no alcanza para
+ * saber si un piso encaja con el rombo: eso lo comprueba quien carga,
+ * abriendo los archivos, y si el primero no sirve pasa al siguiente. Esa
+ * comprobación también es determinista, así que el resultado sigue siendo el
+ * mismo en todos lados.
+ */
+export function tilesetPlans(paths: readonly string[], seed: number): TilesetPlan[] {
+  // Un conjunto sin piso o sin pared no arma un tablero; la esquina es
+  // opcional, porque sin ella se cae a dibujar las dos caras rectas.
+  const usables = groupBySet(paths).filter((s) => s.floors.length > 0 && s.walls.length > 0);
+  return rotar(usables, derivar(seed, 0)).map((candidate, i) => ({
+    set: candidate.set,
+    floors: rotar(candidate.floors, derivar(seed, i + 1)),
+    walls: rotar(candidate.walls, derivar(seed, i + 2)),
+    corners: rotar(candidate.corners, derivar(seed, i + 3)),
+  }));
+}

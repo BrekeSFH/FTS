@@ -12,7 +12,7 @@
 import { Client, Room } from '@colyseus/core';
 import { whoCanAct, type Combatant as Luchador } from './contact';
 import { DEFAULT_FACING, facingFromStep } from './direction';
-import { floorCells, generateMap, isBlocked, type GeneratedMap } from './map';
+import { floorCells, generateMap, isBlocked, randomSeed, type GeneratedMap } from './map';
 import { endTurn, join, leave, remainingMs, startInstance, tick, type TurnState } from './turns';
 import { Combatant, MapSchema, VaultState, type VaultStateType } from './vaultState';
 import { SIGHT_RADIUS, visibleMask } from './vision';
@@ -97,7 +97,7 @@ export class VaultRoom extends Room<VaultRoomOptions> {
   private siguienteTirada = 0;
 
   override onCreate(options: { seed?: number } = {}): void {
-    const seed = options.seed ?? (Date.now() & 0xffff) + 1;
+    const seed = options.seed ?? randomSeed();
     this.map = generateMap(VAULT_WIDTH, VAULT_HEIGHT, seed, MAP_OPTIONS);
     this.siguienteTirada = seed;
 
@@ -105,6 +105,7 @@ export class VaultRoom extends Room<VaultRoomOptions> {
       width: this.map.width,
       height: this.map.height,
       cells: this.map.cells,
+      tileSeed: seed,
       round: 0,
       remainingMs: 0,
       players: new MapSchema(),

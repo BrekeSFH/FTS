@@ -19,6 +19,8 @@ import { clearSpriteCache, loadSpriteAnimation, pickDirectionalAnimation } from 
 import { FLOOR_TILE_HEIGHT, FLOOR_TILE_WIDTH, clearTileCache, loadTile } from './iso/tileset';
 import { WALL_SUFFIXES, siblingPath, splitOrientation, type WallSuffix } from './iso/walls';
 import { singleWall, type PlacedTile, type WallSet } from './lobby/render';
+import { loadTileset } from './tiles/cargar';
+import { tilesetPlans } from './tiles/catalogo';
 import { drawWorldToCanvas } from './maps/render';
 import { isWorld, readWorld } from './maps/world';
 
@@ -49,6 +51,15 @@ const ui = {
 /** Archivos abiertos. El explorador muestra uno por vez, pero todos siguen vivos. */
 const archives: BosArchive[] = [];
 let current: BosArchive | null = null;
+
+/**
+ * Marca de que el tablero lo armó la semilla de la sala y no un archivo
+ * suelto: cerrar un `.BOS` no tiene que vaciarlo por eso.
+ */
+const TABLERO = '\0tablero';
+
+/** Semilla de tiles de la sala conectada, si hay una. */
+let semillaSala: number | null = null;
 
 /** De qué archivo salió cada cosa que el lobby está usando. */
 const lobbySources: { floor: string | null; wall: string | null; character: string | null } = {
@@ -149,6 +160,8 @@ async function openArchives(): Promise<void> {
     }
   }
 
+  // La semilla pudo haber llegado antes que los tiles: recién ahora alcanzan.
+  await rearmarTablero();
   setStatus(fallidos.length ? `No se pudieron abrir: ${fallidos.join('; ')}` : '', fallidos.length > 0);
 }
 
@@ -451,6 +464,53 @@ async function loadWallSet(
   return { faces, fallback };
 }
 
+/**
+ * Arma el tablero con los tiles que le tocan a esa semilla.
+ *
+ * El servidor manda la semilla y no los tiles: el modelo BYOG le prohíbe
+ * alojar assets del juego. Todos los clientes resuelven el mismo catálogo de
+ * la misma manera, así que con la misma instalación todos ven la misma
+ * mazmorra. Si el jugador no tiene abierto ningún `.BOS` con tiles no pasa
+ * nada: queda lo que hubiera puesto antes, o los rombos de alambre.
+ */
+async function armarTablero(seed: number): Promise<void> {
+  const rutas = archives.flatMap((a) => a.files.filter((e) => e.extension === 'til').map((e) => e.path));
+  if (rutas.length === 0) return;
+
+  setStatus(`Armando la mazmorra con la semilla ${seed}…`);
+  try {
+    const juego = await loadTileset(tilesetPlans(rutas, seed), findTileBytes);
+    if (!juego) {
+      setStatus('Ninguno de los conjuntos abiertos alcanza para armar la mazmorra.', true);
+      return;
+    }
+    lobby.setFloor(juego.floors);
+    lobby.setWall(juego.wall);
+    lobby.setCorner(juego.corner);
+    lobbySources.floor = TABLERO;
+    lobbySources.wall = TABLERO;
+    setStatus(
+      `Mazmorra con tiles de "${juego.set}": ${juego.floors.length} pisos` +
+        `${juego.corner ? ', con esquinas' : ', sin esquinas'}.`,
+    );
+  } catch (err) {
+    console.error(err);
+    setStatus(`No se pudo armar la mazmorra: ${(err as Error).message}`, true);
+  }
+}
+
+/**
+ * Vuelve a armar el tablero con la semilla de la sala, si hay una.
+ *
+ * Abrir otro `.BOS` cambia el catálogo, y con él lo que le toca a la semilla.
+ * Si el jugador eligió un piso a mano, eso se respeta.
+ */
+async function rearmarTablero(): Promise<void> {
+  if (semillaSala === null) return;
+  if (lobbySources.floor !== null && lobbySources.floor !== TABLERO) return;
+  await armarTablero(semillaSala);
+}
+
 /** Usa un `.TIL` como piso o como pared del fondo del lobby. */
 async function useAsTile(entry: BosEntry, role: 'floor' | 'wall'): Promise<void> {
   if (!current) return;
@@ -548,6 +608,10 @@ const lobby = setupLobby({
   room: $<HTMLSelectElement>('lobby-room'),
   turn: $('lobby-turn'),
   endTurn: $<HTMLButtonElement>('lobby-end-turn'),
+  onTileSeed: (seed) => {
+    semillaSala = seed;
+    void armarTablero(seed);
+  },
 });
 
 // Comodidad de desarrollo: si hay assets de prueba, el lobby arranca con
