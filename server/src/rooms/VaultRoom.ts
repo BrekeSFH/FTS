@@ -11,7 +11,7 @@
  */
 import { Client, Room } from '@colyseus/core';
 import { currentStash, playerIdFromToken } from '../stash';
-import { ENEMY_PARTY, esEnemigo, nextStep, placeEnemies } from './ai';
+import { ALERTA_RADIO, ENEMY_PARTY, coverStep, esEnemigo, nextStep, placeEnemies } from './ai';
 import { HP_MAX, canShoot, hitChance, resolveShot } from './combat';
 import {
   CARGA_MAXIMA,
@@ -52,7 +52,7 @@ import {
   type CombatantType,
   type VaultStateType,
 } from './vaultState';
-import { SIGHT_RADIUS, isVisible, visibleMask } from './vision';
+import { SIGHT_RADIUS, canSee, isVisible, visibleMask } from './vision';
 
 type VaultRoomOptions = { state: VaultStateType };
 
@@ -786,40 +786,111 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     return jugo;
   }
 
-  /** El turno de un enemigo: disparar si ve a alguien, si no ir a buscarlo. */
+  /**
+   * El turno de un enemigo, acción por acción:
+   *
+   * 1. Si está herido y lleva con qué, se cura.
+   * 2. Si ve a alguien, avisa a los que tiene cerca y anota dónde lo vio.
+   * 3. Si lo tiene a tiro y le alcanza la acción, dispara.
+   * 4. Si lo ve pero no le llega el arma, se acerca.
+   * 5. Si lo ve y ya no puede disparar —sin acción para otro tiro o sin
+   *    balas—, se cubre donde no lo vean con lo que le queda.
+   * 6. Si no ve a nadie, va a donde lo vio por última vez, aunque sea una
+   *    escalera: así se persigue a alguien entre pisos.
+   */
   private playEnemy(id: string): void {
     for (let accion = 0; accion < AP_POR_TURNO * 2; accion++) {
       const yo = this.state.players.get(id);
       if (!yo || yo.ap <= 0) return;
       const map = this.mapOf(yo.floor);
-      // Sin arma o sin balas no tiene con qué pelear: se queda donde está.
-      const arma = this.armaDe(yo);
-      if (!arma || (arma.ammo && !yo.items.includes(arma.ammo))) return;
+      const ocupada = (x: number, y: number) => this.isOccupied(yo.floor, x, y);
 
-      const blanco = this.humanos()
+      if (this.curarse(id, yo)) continue;
+
+      const vistos = this.humanos()
         .map((h) => ({ h, c: this.state.players.get(h)! }))
-        .filter(({ c }) => canShoot(map, yo, c, arma.range))
-        .sort((a, b) => Math.hypot(a.c.x - yo.x, a.c.y - yo.y) - Math.hypot(b.c.x - yo.x, b.c.y - yo.y))[0];
+        .filter(({ c }) => canShoot(map, yo, c, SIGHT_RADIUS))
+        .sort((a, b) => Math.hypot(a.c.x - yo.x, a.c.y - yo.y) - Math.hypot(b.c.x - yo.x, b.c.y - yo.y));
 
-      if (blanco) {
-        this.rastro.set(id, { x: blanco.c.x, y: blanco.c.y });
-        // Sin acción para un disparo, se queda: acercarse a alguien que ya
-        // tiene a tiro solo lo expondría más.
-        if (yo.ap < arma.ap) return;
-        const resultado = this.tryAttack(id, blanco.h);
-        if (!resultado) return;
-        this.announceShot(resultado);
+      if (vistos.length > 0) {
+        const cerca = vistos[0];
+        this.rastro.set(id, { x: cerca.c.x, y: cerca.c.y });
+        this.alertar(id, yo, cerca.c);
+
+        const arma = this.armaDe(yo);
+        const conBalas = arma !== null && (!arma.ammo || yo.items.includes(arma.ammo));
+        if (arma && conBalas) {
+          const aTiro = vistos.find(({ c }) => canShoot(map, yo, c, arma.range));
+          if (aTiro && yo.ap >= arma.ap) {
+            const resultado = this.tryAttack(id, aTiro.h);
+            if (!resultado) return;
+            this.announceShot(resultado);
+            continue;
+          }
+          if (!aTiro) {
+            // Lo ve pero no le llega: se acerca, que es la única forma de
+            // que el turno que viene pueda disparar.
+            const paso = nextStep(map, yo, cerca.c, ocupada);
+            if (!paso || !this.tryMove(id, paso)) return;
+            continue;
+          }
+        }
+
+        // Ya no puede disparar este turno: lo que le queda va a cubrirse.
+        const amenazas = vistos.map(({ c }) => ({ x: c.x, y: c.y }));
+        const paso = coverStep(map, yo, amenazas, yo.ap, ocupada);
+        if (!paso || !this.tryMove(id, paso)) return;
         continue;
       }
 
       const destino = this.rastro.get(id);
       if (!destino) return;
-      const paso = nextStep(map, yo, destino, (x, y) => this.isOccupied(yo.floor, x, y));
+      const piso = yo.floor;
+      const paso = nextStep(map, yo, destino, ocupada);
       if (!paso || !this.tryMove(id, paso)) {
         this.rastro.delete(id);
         return;
       }
-      if (yo.x === destino.x && yo.y === destino.y) this.rastro.delete(id);
+      // Si la escalera lo llevó a otro piso, lo que anotó era del de antes.
+      if (yo.floor !== piso || (yo.x === destino.x && yo.y === destino.y)) this.rastro.delete(id);
+    }
+  }
+
+  /**
+   * Si un enemigo herido lleva con qué curarse, lo usa. Se cura recién por
+   * debajo de la mitad: antes, gastar un turno en eso es peor que disparar.
+   */
+  private curarse(id: string, yo: CombatantType): boolean {
+    if (yo.hp > yo.maxHp / 2 || yo.ap < AP_USAR) return false;
+    const cura = yo.items.find((item) => itemById(item)?.kind === 'consumable');
+    return cura !== undefined && this.tryUse(id, cura);
+  }
+
+  /**
+   * Un enemigo que ve a alguien les avisa a los de su piso que tiene cerca.
+   * Los que no tenían a quién buscar van a donde está; los que ya seguían a
+   * alguien siguen con lo suyo.
+   */
+  private alertar(id: string, yo: CombatantType, visto: Cell): void {
+    for (const otro of this.enemigos()) {
+      if (otro === id || this.rastro.has(otro)) continue;
+      const c = this.state.players.get(otro)!;
+      if (c.floor !== yo.floor || Math.hypot(c.x - yo.x, c.y - yo.y) > ALERTA_RADIO) continue;
+      this.rastro.set(otro, { x: visto.x, y: visto.y });
+    }
+  }
+
+  /**
+   * Alguien se fue por una escalera: los enemigos de ese piso que la tenían a
+   * la vista lo vieron irse, y van a buscarlo por ahí.
+   */
+  private verIrsePorLaEscalera(floor: number, escalera: Cell): void {
+    const map = this.mapOf(floor);
+    for (const id of this.enemigos()) {
+      const e = this.state.players.get(id)!;
+      if (e.floor !== floor) continue;
+      if (Math.hypot(e.x - escalera.x, e.y - escalera.y) > SIGHT_RADIUS) continue;
+      if (canSee(map, e.x, e.y, escalera.x, escalera.y)) this.rastro.set(id, { ...escalera });
     }
   }
 
@@ -1061,6 +1132,7 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     const libre = this.nearestFreeCell(destino, llegada);
     if (!libre) return;
 
+    if (combatant.party !== ENEMY_PARTY) this.verIrsePorLaEscalera(combatant.floor, { x: combatant.x, y: combatant.y });
     combatant.floor = destino;
     combatant.x = libre.x;
     combatant.y = libre.y;

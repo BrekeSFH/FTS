@@ -7,12 +7,15 @@
  * orden como todos. Lo único distinto es que su turno lo juega el servidor en
  * el acto, apenas les toca.
  *
- * La conducta es corta a propósito: si ven a alguien, le disparan; si lo
- * perdieron de vista, van a donde lo vieron por última vez; si no, esperan.
- * Alcanza para que un piso tenga peligro sin que la IA juegue mejor que una
- * persona.
+ * La conducta es corta a propósito: si ven a alguien, le disparan, y con lo
+ * que les sobra del turno se cubren donde no los vea; si lo perdieron de
+ * vista, van a donde lo vieron por última vez, también escaleras abajo si lo
+ * vieron irse por ahí; si no, esperan. Al ver a alguien avisan a los que
+ * tienen cerca, y heridos se curan si llevan con qué. Alcanza para que un
+ * piso tenga peligro sin que la IA juegue mejor que una persona.
  */
 import { STAIRS_DOWN, STAIRS_UP, createRandom, isBlocked, type Cell, type DungeonFloor } from './map';
+import { canSee } from './vision';
 import { ITEMS, itemById, tierForFloor, weaponStats } from './items';
 import { ammoStack, rollItems } from './loot';
 
@@ -119,13 +122,25 @@ const PASOS = [
 ];
 
 /**
+ * Hasta dónde se oye un aviso entre enemigos, en celdas. Se oye a través de
+ * las paredes: es un grito, no una seña.
+ */
+export const ALERTA_RADIO = 8;
+
+/** Una escalera: pisarla cambia de piso. */
+const esEscalera = (map: DungeonFloor, x: number, y: number): boolean => {
+  const c = map.cells[y * map.width + x];
+  return c === STAIRS_DOWN || c === STAIRS_UP;
+};
+
+/**
  * El primer paso del camino más corto hasta `hasta`, o `null` si no hay.
  *
- * Es un recorrido en anchura por la grilla. Las escaleras cuentan como pared:
- * un enemigo que pisa una se iría de piso, y perseguir a alguien escaleras
- * abajo es una conducta que no está decidida. `ocupada` dice qué celdas
- * tienen a alguien; el destino mismo se acepta aunque esté ocupado, para
- * poder acercarse a una persona.
+ * Es un recorrido en anchura por la grilla. Las escaleras cuentan como pared
+ * salvo que sean el destino: así un enemigo no cambia de piso por pasar,
+ * pero sí puede ir a buscar a alguien escaleras abajo si lo vio irse por
+ * ahí. `ocupada` dice qué celdas tienen a alguien; el destino mismo se acepta
+ * aunque esté ocupado, para poder acercarse a una persona.
  */
 export function nextStep(
   map: DungeonFloor,
@@ -135,11 +150,9 @@ export function nextStep(
 ): { dx: number; dy: number } | null {
   if (desde.x === hasta.x && desde.y === hasta.y) return null;
   const clave = (x: number, y: number) => y * map.width + x;
-  const transitable = (x: number, y: number) => {
-    if (isBlocked(map, x, y)) return false;
-    const c = map.cells[clave(x, y)];
-    return c !== STAIRS_DOWN && c !== STAIRS_UP;
-  };
+  const esDestino = (x: number, y: number) => x === hasta.x && y === hasta.y;
+  const transitable = (x: number, y: number) =>
+    !isBlocked(map, x, y) && (!esEscalera(map, x, y) || esDestino(x, y));
 
   const primero = new Map<number, { dx: number; dy: number }>();
   const cola: Cell[] = [desde];
@@ -151,14 +164,57 @@ export function nextStep(
       const y = actual.y + paso.dy;
       const k = clave(x, y);
       if (vistos.has(k) || !transitable(x, y)) continue;
-      const esDestino = x === hasta.x && y === hasta.y;
-      if (!esDestino && ocupada(x, y)) continue;
+      const llega = esDestino(x, y);
+      if (!llega && ocupada(x, y)) continue;
       vistos.add(k);
       const inicial = actual === desde ? paso : primero.get(clave(actual.x, actual.y))!;
-      if (esDestino) return inicial;
+      if (llega) return inicial;
       primero.set(k, inicial);
       cola.push({ x, y });
     }
+  }
+  return null;
+}
+
+/**
+ * El primer paso hacia la celda más cercana donde ninguna amenaza lo vea,
+ * a no más de `pasos` pasos. `null` si ya está a cubierto o si no hay
+ * ninguna a mano.
+ *
+ * Es lo que hace un enemigo con lo que le sobra del turno después de
+ * disparar: quedarse a la vista con puntos sin usar es regalarle el tiro al
+ * otro. Las escaleras no cuentan como cobertura: pisarlas cambiaría de piso.
+ */
+export function coverStep(
+  map: DungeonFloor,
+  desde: Cell,
+  amenazas: readonly Cell[],
+  pasos: number,
+  ocupada: (x: number, y: number) => boolean,
+): { dx: number; dy: number } | null {
+  const cubierta = (x: number, y: number) => amenazas.every((a) => !canSee(map, a.x, a.y, x, y));
+  if (amenazas.length === 0 || cubierta(desde.x, desde.y) || pasos <= 0) return null;
+
+  const clave = (x: number, y: number) => y * map.width + x;
+  const primero = new Map<number, { dx: number; dy: number }>();
+  let frente: Cell[] = [desde];
+  const vistos = new Set([clave(desde.x, desde.y)]);
+  for (let n = 0; n < pasos && frente.length > 0; n++) {
+    const siguiente: Cell[] = [];
+    for (const actual of frente) {
+      for (const paso of PASOS) {
+        const x = actual.x + paso.dx;
+        const y = actual.y + paso.dy;
+        const k = clave(x, y);
+        if (vistos.has(k) || isBlocked(map, x, y) || esEscalera(map, x, y) || ocupada(x, y)) continue;
+        vistos.add(k);
+        const inicial = actual === desde ? paso : primero.get(clave(actual.x, actual.y))!;
+        if (cubierta(x, y)) return inicial;
+        primero.set(k, inicial);
+        siguiente.push({ x, y });
+      }
+    }
+    frente = siguiente;
   }
   return null;
 }
