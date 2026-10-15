@@ -343,10 +343,11 @@ export function sendStep(room: LobbyRoom, step: Step): void {
 }
 
 /**
- * Camina hasta una celda: el servidor arma el camino y lo da de a un paso.
- * Con `then: 'loot'` se frena al lado y abre el contenedor que hay ahí.
+ * Camina hasta una celda: el servidor arma el camino y lo da de a un paso,
+ * abriendo las puertas que cruce. Con `then` se frena al lado y abre lo que
+ * hay ahí: el contenedor (`loot`) o la puerta (`open`).
  */
-export function sendMoveTo(room: LobbyRoom, x: number, y: number, then?: 'loot'): void {
+export function sendMoveTo(room: LobbyRoom, x: number, y: number, then?: 'loot' | 'open'): void {
   room.send('moveTo', then ? { x, y, then } : { x, y });
 }
 

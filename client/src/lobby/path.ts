@@ -20,10 +20,13 @@ export interface PreviewMap {
 }
 
 const ESCALERAS = new Set(['>', '<']);
+/** Puerta cerrada: el camino pasa, pero hay que abrirla al llegar. */
+export const PUERTA_CERRADA = 'D';
 
 /**
  * El camino más corto, sin la celda de partida, o `null` si no hay. Con
- * `alLado` alcanza con llegar al lado, como para abrir un contenedor.
+ * `alLado` alcanza con llegar al lado, como para abrir un contenedor. Pasa
+ * por puertas cerradas, como el servidor, que las va abriendo.
  */
 export function previewPath(
   map: PreviewMap,
@@ -69,4 +72,12 @@ export function previewPath(
     frente = siguiente;
   }
   return null;
+}
+
+/**
+ * Lo que cuesta caminar un camino, en puntos de acción: uno por paso y uno
+ * más por cada puerta cerrada, que hay que abrir antes de pasar.
+ */
+export function pathCost(map: PreviewMap, camino: readonly Point[]): number {
+  return camino.reduce((total, p) => total + (map.cells[p.y * map.width + p.x] === PUERTA_CERRADA ? 2 : 1), 0);
 }

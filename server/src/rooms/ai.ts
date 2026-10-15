@@ -15,7 +15,7 @@
  * piso tenga peligro sin que la IA juegue mejor que una persona.
  */
 import { STAIRS_DOWN, STAIRS_UP, createRandom, isBlocked, type Cell, type DungeonFloor } from './map';
-import { PASOS, findPath, type PathOptions } from './path';
+import { PASOS, findPath } from './path';
 import { canSee } from './vision';
 import { ITEMS, itemById, tierForFloor, weaponStats } from './items';
 import { ammoStack, rollItems } from './loot';
@@ -129,16 +129,17 @@ const esEscalera = (map: DungeonFloor, x: number, y: number): boolean => {
  * no cambia de piso por pasar, pero sí puede ir a buscar a alguien escaleras
  * abajo si lo vio irse por ahí. `ocupada` dice qué celdas tienen a alguien;
  * el destino mismo se acepta aunque esté ocupado, para poder acercarse a una
- * persona. `pisable` permite descartar más celdas, como puertas cerradas.
+ * persona. Con `puertas`, el camino puede pasar por puertas cerradas: quien
+ * lo siga tiene que abrir cada una al llegar.
  */
 export function nextStep(
   map: DungeonFloor,
   desde: Cell,
   hasta: Cell,
   ocupada: (x: number, y: number) => boolean,
-  pisable?: PathOptions['pisable'],
+  puertas = false,
 ): { dx: number; dy: number } | null {
-  const camino = findPath(map, desde, hasta, { ocupada, pisable });
+  const camino = findPath(map, desde, hasta, { ocupada, puertas });
   if (!camino || camino.length === 0) return null;
   return { dx: camino[0].x - desde.x, dy: camino[0].y - desde.y };
 }

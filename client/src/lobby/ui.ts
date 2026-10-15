@@ -52,7 +52,7 @@ import { loadoutFrom, stashRows, valueOfItems, type StashContents } from './stas
 import { ACTION_LABEL, formatKg, inventoryRows, loadSummary, weightOfItems, type InventoryAction } from './inventory';
 import { playerAt, toWorld, type Origin } from './pointer';
 import { cellCenter, screenToGrid, type Point } from '../iso/projection';
-import { previewPath } from './path';
+import { PUERTA_CERRADA, pathCost, previewPath } from './path';
 import type { Hover } from './render';
 import { PASO_MS, createMotion } from './motion';
 import { turnHud } from './hud';
@@ -64,8 +64,9 @@ import { renderLobby, type PlacedTile, type WallSet } from './render';
  */
 export const PANTALLA = { width: 1920, height: 1080 } as const;
 
-/** Lo que cuesta abrir un contenedor, para sumarlo al camino. Lo cobra el servidor. */
+/** Lo que cuesta abrir un contenedor o una puerta, para sumarlo al camino. Lo cobra el servidor. */
 const AP_SAQUEO = 2;
+const AP_PUERTA = 1;
 
 /** Los escalones de zoom de la rueda, y con cuál se arranca. */
 export const ZOOMS: readonly number[] = [1, 1.5, 2, 2.5, 3];
@@ -320,6 +321,7 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
   type Intencion =
     | { tipo: 'disparar'; blanco: string }
     | { tipo: 'saquear'; celda: Point; camino: Point[] | null }
+    | { tipo: 'abrir'; celda: Point; camino: Point[] | null }
     | { tipo: 'caminar'; celda: Point; camino: Point[] | null };
 
   const intencion = (): Intencion | null => {
@@ -338,7 +340,8 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
       return hay;
     };
     const cofre = Array.from(vista.caches ?? []).some((c) => !c.looted && c.x === celda.x && c.y === celda.y);
-    const alLado = cofre || ocupada(celda.x, celda.y);
+    const puerta = vista.cells[celda.y * vista.width + celda.x] === PUERTA_CERRADA;
+    const alLado = cofre || puerta || ocupada(celda.x, celda.y);
     const camino = previewPath(
       { width: vista.width, height: vista.height, cells: vista.cells },
       yo,
@@ -346,7 +349,7 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
       ocupada,
       alLado,
     );
-    return { tipo: cofre ? 'saquear' : 'caminar', celda, camino };
+    return { tipo: cofre ? 'saquear' : puerta ? 'abrir' : 'caminar', celda, camino };
   };
 
   /** Lo que se marca bajo el mouse, con lo que costaría en la Vault. */
@@ -355,9 +358,13 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     if (!i || i.tipo === 'disparar' || !i.camino) return null;
     const yo = room?.state?.players?.get(room.sessionId);
     if (!salaPorTurnos() || !yo) return { path: i.camino, target: i.celda, label: '', reachable: true };
-    const costo = i.camino.length + (i.tipo === 'saquear' ? AP_SAQUEO : 0);
+    const vista = floorView(room!.state, room!.sessionId, mapas);
+    const mapa = { width: vista.width, height: vista.height, cells: vista.cells ?? '' };
+    const extra = i.tipo === 'saquear' ? AP_SAQUEO : i.tipo === 'abrir' ? AP_PUERTA : 0;
+    const costo = pathCost(mapa, i.camino) + extra;
     const ap = yo.active ? (yo.ap ?? 0) : 0;
-    const label = i.tipo === 'saquear' ? `Abrir · ${costo} PA` : `${costo} PA`;
+    const accion = { saquear: 'Saquear · ', abrir: 'Abrir puerta · ', caminar: '' }[i.tipo];
+    const label = `${accion}${costo} PA`;
     return { path: i.camino, target: i.celda, label, reachable: costo <= ap };
   };
 
@@ -701,14 +708,14 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     const i = intencion();
     if (!i) return;
     if (i.tipo === 'disparar') sendAttack(room, i.blanco);
-    else sendMoveTo(room, i.celda.x, i.celda.y, i.tipo === 'saquear' ? 'loot' : undefined);
+    else sendMoveTo(room, i.celda.x, i.celda.y, i.tipo === 'saquear' ? 'loot' : i.tipo === 'abrir' ? 'open' : undefined);
   });
 
   // El cursor dice qué haría el click: mira para disparar, mano para abrir.
   ui.canvas.addEventListener('mousemove', (event) => {
     mouse = { x: event.offsetX, y: event.offsetY };
     const i = intencion();
-    ui.canvas.style.cursor = i?.tipo === 'disparar' ? 'crosshair' : i?.tipo === 'saquear' ? 'pointer' : 'default';
+    ui.canvas.style.cursor = i?.tipo === 'disparar' ? 'crosshair' : i?.tipo === 'caminar' || !i ? 'default' : 'pointer';
     draw();
   });
   ui.canvas.addEventListener('mouseleave', () => {

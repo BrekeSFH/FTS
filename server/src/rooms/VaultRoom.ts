@@ -30,8 +30,12 @@ import { DEFAULT_FACING, facingFromStep } from './direction';
 import {
   STAIRS_DOWN,
   STAIRS_UP,
+  DOOR_CLOSED,
+  DOOR_OPEN,
   WALL,
   floorCells,
+  isDoor,
+  marcar,
   generateDungeon,
   isBlocked,
   randomSeed,
@@ -52,7 +56,7 @@ import {
   type CombatantType,
   type VaultStateType,
 } from './vaultState';
-import { PASO_RUTA_MS, findPath } from './path';
+import { PASO_RUTA_MS, alcanza, esPuertaCerrada, findPath } from './path';
 import { SIGHT_RADIUS, canSee, isVisible, visibleMask } from './vision';
 
 type VaultRoomOptions = { state: VaultStateType };
@@ -61,8 +65,11 @@ export const VAULT_WIDTH = 40;
 export const VAULT_HEIGHT = 30;
 export const MAX_CLIENTS = 16;
 
-/** Mazmorra con más salas que el lobby: hace falta sitio para perderse. */
-const MAP_OPTIONS = { rooms: 7, minRoom: 4, maxRoom: 8 };
+/**
+ * Salas de 5 a 11 celdas de lado: en 40x30 salen entre 15 y 20 por piso,
+ * pegadas y unidas por puertas.
+ */
+const MAP_OPTIONS = { minRoom: 5, maxRoom: 11 };
 
 /**
  * Pisos de la mazmorra. Con tres ya hay un piso del medio, que es el único
@@ -119,6 +126,8 @@ export const AP_EQUIPAR = 1;
 export const AP_USAR = 2;
 /** Cuesta soltar algo. Lo mismo que equipar: es sacarse algo de encima. */
 export const AP_SOLTAR = 1;
+/** Cuesta abrir o cerrar una puerta. */
+export const AP_PUERTA = 1;
 
 export interface ItemMessage {
   /** Id del catálogo de un objeto que se lleva encima. */
@@ -206,12 +215,12 @@ export interface MoveMessage {
 export interface MoveToMessage {
   x?: unknown;
   y?: unknown;
-  /** Qué hacer al llegar al lado: abrir el contenedor que hay ahí. */
+  /** Qué hacer al llegar al lado: `loot` abre el contenedor, `open` la puerta. */
   then?: unknown;
 }
 
-/** Qué se puede hacer al final de una ruta. */
-type AlLlegar = 'loot' | null;
+/** Qué se puede hacer al final de una ruta: abrir un contenedor o una puerta. */
+type AlLlegar = 'loot' | 'open' | null;
 
 /** Una ruta en curso: lo que falta caminar y qué hacer al llegar. */
 interface Ruta {
@@ -330,7 +339,10 @@ export class VaultRoom extends Room<VaultRoomOptions> {
    */
   private mascaras = new Map<string, { floor: number; mask: string }>();
 
-  /** Qué celdas exploró cada jugador, un arreglo por piso. */
+  /**
+   * Qué vio cada jugador de cada piso: el código de cada celda tal como la
+   * vio la última vez, o cero si nunca la vio.
+   */
   private explorado = new Map<string, Uint8Array[]>();
 
   /** La ruta que va caminando cada jugador, si hizo click en algún lado. */
@@ -431,6 +443,12 @@ export class VaultRoom extends Room<VaultRoomOptions> {
 
     this.onMessage('loot', cortando((client) => {
       this.tryLoot(client.sessionId);
+      this.publish();
+    }));
+
+    this.onMessage('door', cortando((client, message: { x?: unknown; y?: unknown }) => {
+      const { x, y } = message ?? {};
+      if (Number.isInteger(x) && Number.isInteger(y)) this.tryDoor(client.sessionId, { x: x as number, y: y as number });
       this.publish();
     }));
 
@@ -878,8 +896,7 @@ export class VaultRoom extends Room<VaultRoomOptions> {
           if (!aTiro) {
             // Lo ve pero no le llega: se acerca, que es la única forma de
             // que el turno que viene pueda disparar.
-            const paso = nextStep(map, yo, cerca.c, ocupada);
-            if (!paso || !this.tryMove(id, paso)) return;
+            if (!this.pasoHacia(id, yo, cerca.c)) return;
             continue;
           }
         }
@@ -894,14 +911,26 @@ export class VaultRoom extends Room<VaultRoomOptions> {
       const destino = this.rastro.get(id);
       if (!destino) return;
       const piso = yo.floor;
-      const paso = nextStep(map, yo, destino, ocupada);
-      if (!paso || !this.tryMove(id, paso)) {
+      if (!this.pasoHacia(id, yo, destino)) {
         this.rastro.delete(id);
         return;
       }
       // Si la escalera lo llevó a otro piso, lo que anotó era del de antes.
       if (yo.floor !== piso || (yo.x === destino.x && yo.y === destino.y)) this.rastro.delete(id);
     }
+  }
+
+  /**
+   * Un paso de un enemigo hacia una celda: si lo que sigue es una puerta
+   * cerrada, la abre; si no, camina. Devuelve si pudo hacer algo.
+   */
+  private pasoHacia(id: string, yo: CombatantType, destino: Cell): boolean {
+    const map = this.mapOf(yo.floor);
+    const paso = nextStep(map, yo, destino, (x, y) => this.isOccupied(yo.floor, x, y), true);
+    if (!paso) return false;
+    const celda = { x: yo.x + paso.dx, y: yo.y + paso.dy };
+    if (esPuertaCerrada(map, celda.x, celda.y)) return this.tryDoor(id, celda);
+    return this.tryMove(id, paso);
   }
 
   /**
@@ -1157,7 +1186,7 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     const y = message?.y;
     if (!c || !Number.isInteger(x) || !Number.isInteger(y)) return false;
     const destino = { x: x as number, y: y as number };
-    const alLlegar: AlLlegar = message?.then === 'loot' ? 'loot' : null;
+    const alLlegar: AlLlegar = message?.then === 'loot' ? 'loot' : message?.then === 'open' ? 'open' : null;
     if (!this.activos().has(sessionId)) {
       this.avisar(sessionId, 'Todavía no es tu turno.');
       return false;
@@ -1168,6 +1197,8 @@ export class VaultRoom extends Room<VaultRoomOptions> {
       ocupada: (cx, cy) => this.isOccupied(c.floor, cx, cy),
       alLado: alLlegar !== null || this.isOccupied(c.floor, destino.x, destino.y),
       max: AP_POR_TURNO * 4,
+      // Las puertas del camino se van abriendo al llegar a cada una.
+      puertas: true,
     });
     if (!camino) {
       this.avisar(sessionId, 'No hay forma de llegar ahí.');
@@ -1202,6 +1233,15 @@ export class VaultRoom extends Room<VaultRoomOptions> {
       this.terminarRuta(sessionId, ruta);
       return false;
     }
+    // Una puerta cerrada en el camino se abre, y el paso queda para después.
+    if (esPuertaCerrada(this.mapOf(c.floor), siguiente.x, siguiente.y)) {
+      ruta.pasos.unshift(siguiente);
+      if (!this.tryDoor(sessionId, siguiente)) {
+        this.rutas.delete(sessionId);
+        return false;
+      }
+      return true;
+    }
     const paso = { dx: siguiente.x - c.x, dy: siguiente.y - c.y };
     if (!this.tryMove(sessionId, paso)) {
       this.rutas.delete(sessionId);
@@ -1225,6 +1265,36 @@ export class VaultRoom extends Room<VaultRoomOptions> {
   private terminarRuta(sessionId: string, ruta: Ruta): void {
     this.rutas.delete(sessionId);
     if (ruta.alLlegar === 'loot') this.tryLoot(sessionId);
+    if (ruta.alLlegar === 'open' && esPuertaCerrada(this.mapOf(this.state.players.get(sessionId)?.floor ?? 0), ruta.destino.x, ruta.destino.y)) {
+      this.tryDoor(sessionId, ruta.destino);
+    }
+  }
+
+  /**
+   * Abre o cierra una puerta que se tiene al lado, si le toca y le alcanza
+   * la acción. No se cierra con alguien parado en el marco.
+   *
+   * La puerta cambia el mapa del piso: lo que se ve a través de ella también.
+   * Por eso, después, a todos los de ese piso se les vuelve a mandar lo que
+   * ven: alguien que miraba la puerta desde la otra punta ahora ve la sala.
+   */
+  tryDoor(sessionId: string, celda: Cell): boolean {
+    const c = this.puedeGastar(sessionId, AP_PUERTA);
+    if (!c) return false;
+    const map = this.mapOf(c.floor);
+    if (!isDoor(map, celda.x, celda.y) || !alcanza(c, celda)) return false;
+    const cerrada = esPuertaCerrada(map, celda.x, celda.y);
+    if (!cerrada && this.isOccupied(c.floor, celda.x, celda.y)) return false;
+
+    this.floors[c.floor] = { ...map, cells: marcar(map, celda, cerrada ? DOOR_OPEN : DOOR_CLOSED) };
+    const facing = facingFromStep(Math.sign(celda.x - c.x), Math.sign(celda.y - c.y));
+    if (facing !== null) c.facing = facing;
+    c.ap -= AP_PUERTA;
+    for (const client of this.clients) {
+      if (this.state.players.get(client.sessionId)?.floor === c.floor) this.sendVision(client);
+    }
+    if (c.ap === 0) this.endTurn(sessionId);
+    return true;
   }
 
   /** Cierra el turno de alguien, si es suyo para cerrar. */
@@ -1348,7 +1418,7 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     const real = this.mapOf(floor).cells;
     if (!visto) return DESCONOCIDO.repeat(real.length);
     let out = '';
-    for (let i = 0; i < real.length; i++) out += visto[i] ? real[i] : DESCONOCIDO;
+    for (let i = 0; i < real.length; i++) out += visto[i] ? String.fromCharCode(visto[i]) : DESCONOCIDO;
     return out;
   }
 
@@ -1358,8 +1428,12 @@ export class VaultRoom extends Room<VaultRoomOptions> {
       pisos = this.floors.map((f) => new Uint8Array(f.cells.length));
       this.explorado.set(sessionId, pisos);
     }
+    // Se recuerda cómo estaba cada celda la última vez que se la vio, no cómo
+    // está ahora: una puerta que alguien abrió en la otra punta no se sabe
+    // hasta volver a mirarla.
     const visto = pisos[floor];
-    for (let i = 0; i < mask.length; i++) if (mask[i] === '1') visto[i] = 1;
+    const real = this.mapOf(floor).cells;
+    for (let i = 0; i < mask.length; i++) if (mask[i] === '1') visto[i] = real.charCodeAt(i);
     return this.knownMap(sessionId, floor);
   }
 

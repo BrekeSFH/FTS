@@ -151,6 +151,8 @@ describe('caminar con un click en la Vault', () => {
   it('se frena al ver a alguien de otro bando', async () => {
     const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
     const client = await entrar(room);
+    const avisos: string[] = [];
+    client.onMessage('notice', (m: { text: string }) => avisos.push(m.text));
     const id = room.enemigos().find((e) => room.state.players.get(e)!.floor === 0)!;
     const e = room.state.players.get(id)!;
     const c = room.state.players.get(client.sessionId)!;
@@ -159,7 +161,7 @@ describe('caminar con un click en la Vault', () => {
     const map = room.mapOf(0);
     const inicio = floorCells(map).find((p) => {
       if (map.cells[p.y * map.width + p.x] !== FLOOR || canSee(map, p.x, p.y, e.x, e.y)) return false;
-      const camino = findPath(map, p, e, { alLado: true });
+      const camino = findPath(map, p, e, { alLado: true, puertas: true });
       return camino !== null && camino.length >= 3 && camino.length <= AP_POR_TURNO;
     });
     expect(inicio, 'tiene que haber un rincón así').toBeDefined();
@@ -169,9 +171,9 @@ describe('caminar con un click en la Vault', () => {
     await pasos(AP_POR_TURNO + 1);
     const rutas = room['rutas'] as Map<string, unknown>;
     expect(rutas.has(client.sessionId), 'la ruta terminó').toBe(false);
-    // Se frenó al verlo: no siguió hasta pegarse.
+    // Se frenó por verlo, y no por llegar o quedarse sin acción.
     expect(room['hostilesALaVista'](client.sessionId).has(id)).toBe(true);
-    expect(Math.max(Math.abs(c.x - e.x), Math.abs(c.y - e.y))).toBeGreaterThan(1);
+    expect(avisos.some((t) => /te frenás/.test(t)), avisos.join(' / ')).toBe(true);
   });
 
   it('a donde no se puede llegar, no camina', async () => {

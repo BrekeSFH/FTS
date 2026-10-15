@@ -77,7 +77,7 @@ npm run typecheck
 
 Con el servidor levantado y el cliente en `npm run dev`, abrí http://localhost:5173 en dos pestañas, puse un nombre y conectá. Flechas o WASD para moverte; Q, E, Z y C para las diagonales.
 
-El botón **Pantalla completa** deja el tablero solo, escalado y centrado en negro. El control vive dentro del tablero para seguir siendo alcanzable ahí adentro, donde el resto de la página no se dibuja; `Esc` también sale.
+Se juega con el mouse: click en el piso para caminar, en un contenedor o una puerta para abrirlos y en un Saqueador para dispararle. La rueda acerca y aleja. El botón **Pantalla completa** muestra el juego a 1920×1080 con la cámara siguiendo al personaje y la interfaz encima; `Esc` sale.
 
 ### Assets de prueba
 

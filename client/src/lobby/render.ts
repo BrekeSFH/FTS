@@ -145,10 +145,26 @@ const WALL = '#';
 const STAIRS_DOWN = '>';
 const STAIRS_UP = '<';
 
-/** Si el mapa declara pared en esa celda. Fuera del mapa cuenta como roca. */
+/** Puertas de la Vault: cerrada y abierta. Van en la pared entre dos salas. */
+const DOOR_CLOSED = 'D';
+const DOOR_OPEN = 'd';
+
+/**
+ * Si en esa celda hay algo que se dibuja como pared: roca o una puerta
+ * cerrada. Fuera del mapa cuenta como roca.
+ */
 function esPared(state: LobbyState, gx: number, gy: number): boolean {
   if (gx < 0 || gy < 0 || gx >= state.width || gy >= state.height) return true;
-  return state.cells?.[gy * state.width + gx] === WALL;
+  const c = state.cells?.[gy * state.width + gx];
+  return c === WALL || c === DOOR_CLOSED;
+}
+
+/**
+ * Si una celda es parte de la pared para las de al lado. Una puerta, abierta
+ * o cerrada, es el marco de la pared: la pared vecina no le da la cara.
+ */
+function esMuro(state: LobbyState, gx: number, gy: number): boolean {
+  return esPared(state, gx, gy) || state.cells?.[gy * state.width + gx] === DOOR_OPEN;
 }
 
 /** Qué escalera hay en una celda, si hay alguna. */
@@ -452,7 +468,7 @@ export function renderLobby(
     // Solo las caras del fondo que dan a una sala; las cercanas taparían el
     // interior. Las que quedan se desvanecen mientras escondan a alguien.
     if (wall && pared) {
-      const plan = wallPlan((x, y) => !esPared(state, x, y), cell.x, cell.y);
+      const plan = wallPlan((x, y) => !esMuro(state, x, y), cell.x, cell.y);
       const tapando = jugadores.some(({ player }) => hidesCell(cell.x, cell.y, player.x, player.y));
       // En el vértice va una sola pieza de esquina; sin ella, las dos caras.
       const piezas =
@@ -467,6 +483,15 @@ export function renderLobby(
       }
     }
 
+    // La puerta va arriba de la pared: marcador y no sprite, porque las
+    // puertas del juego son objetos con su propia animación, no tiles.
+    const c = state.cells?.[cell.y * state.width + cell.x];
+    if (c === DOOR_CLOSED || c === DOOR_OPEN) {
+      context.globalAlpha = niebla;
+      drawDoor(context, cell.x, cell.y, c === DOOR_CLOSED);
+      context.globalAlpha = 1;
+    }
+
     // A nadie se lo dibuja en una celda que no se esté viendo: lo explorado es
     // el mapa que uno recuerda, no un rastreador de rivales.
     if (!visible) continue;
@@ -478,6 +503,30 @@ export function renderLobby(
   // El costo va arriba de todo, para que ningún personaje o pared lo tape.
   if (hover?.label) drawHoverLabel(context, hover);
   return origen;
+}
+
+/**
+ * Una puerta. Cerrada, una hoja de pie en el medio de la celda; abierta, el
+ * marco en el piso, para que se note por dónde se pasa.
+ */
+function drawDoor(context: CanvasRenderingContext2D, gx: number, gy: number, cerrada: boolean): void {
+  if (!cerrada) {
+    outlineDiamond(context, gx, gy, 'rgba(214, 150, 70, 0.85)');
+    return;
+  }
+  const { x, y } = cellCenter(gx, gy);
+  const ancho = 18;
+  const alto = 40;
+  context.fillStyle = '#7a4f24';
+  context.strokeStyle = '#24160a';
+  context.lineWidth = 2;
+  context.fillRect(x - ancho / 2, y - alto + 6, ancho, alto);
+  context.strokeRect(x - ancho / 2, y - alto + 6, ancho, alto);
+  // El picaporte, para que se lea como puerta y no como un cajón.
+  context.fillStyle = '#e0c070';
+  context.beginPath();
+  context.arc(x + ancho / 2 - 5, y - alto / 2 + 6, 2, 0, Math.PI * 2);
+  context.fill();
 }
 
 /** El borde de una celda, para marcar adónde apunta el mouse. */

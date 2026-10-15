@@ -5,7 +5,7 @@
  * que el camino no zigzaguee. Lo usan el jugador que hace click en una celda
  * y los enemigos que van a buscar a alguien.
  */
-import { STAIRS_DOWN, STAIRS_UP, isBlocked, type Cell, type GameMap } from './map';
+import { DOOR_CLOSED, STAIRS_DOWN, STAIRS_UP, isBlocked, type Cell, type GameMap } from './map';
 
 /**
  * Cada cuánto da un paso quien sigue una ruta. Es la duración de un paso en
@@ -42,7 +42,17 @@ export interface PathOptions {
   alLado?: boolean;
   /** Largo máximo del camino. Más que esto se considera que no hay. */
   max?: number;
+  /**
+   * Si el camino puede pasar por puertas cerradas. Quien lo camine tiene que
+   * abrirlas al llegar a cada una: es lo que hace un jugador con un click, y
+   * un enemigo que va a buscar a alguien.
+   */
+  puertas?: boolean;
 }
+
+/** Si en esa celda hay una puerta cerrada. */
+export const esPuertaCerrada = (map: GameMap, x: number, y: number): boolean =>
+  map.cells[y * map.width + x] === DOOR_CLOSED;
 
 const esEscalera = (map: GameMap, x: number, y: number): boolean => {
   const c = map.cells[y * map.width + x];
@@ -57,7 +67,9 @@ export const alcanza = (a: Cell, b: Cell): boolean => Math.max(Math.abs(a.x - b.
  * vacío si ya se está ahí (o al lado, con `alLado`), `null` si no hay.
  */
 export function findPath(map: GameMap, desde: Cell, hasta: Cell, opciones: PathOptions = {}): Cell[] | null {
-  const { ocupada = () => false, alLado = false, max = map.width * map.height } = opciones;
+  const { ocupada = () => false, alLado = false, max = map.width * map.height, puertas = false } = opciones;
+  const bloqueada = (x: number, y: number) =>
+    isBlocked(map, x, y) && !(puertas && x >= 0 && y >= 0 && x < map.width && y < map.height && esPuertaCerrada(map, x, y));
   const pisable = opciones.pisable ?? ((x, y, esDestino) => !esEscalera(map, x, y) || esDestino);
   const llego = (c: Cell) => (alLado ? alcanza(c, hasta) : c.x === hasta.x && c.y === hasta.y);
   if (llego(desde)) return [];
@@ -73,7 +85,7 @@ export function findPath(map: GameMap, desde: Cell, hasta: Cell, opciones: PathO
         const x = actual.x + dx;
         const y = actual.y + dy;
         const k = clave(x, y);
-        if (vistos.has(k) || isBlocked(map, x, y)) continue;
+        if (vistos.has(k) || bloqueada(x, y)) continue;
         const esDestino = x === hasta.x && y === hasta.y;
         if (!pisable(x, y, esDestino)) continue;
         // El destino se acepta ocupado: sin eso no se podría ir hacia alguien.
