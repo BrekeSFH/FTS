@@ -37,6 +37,10 @@ export function turnHud(state: LobbyState | null, me: LobbyPlayer | null | undef
 
   const partes = [`Ronda ${state.round}`];
   if (me.party) partes.push(me.party);
+  // Con un piso solo no hay nada que decir; con varios, es lo que hace falta
+  // para saber cuánto falta bajar.
+  const pisos = state.floors?.length ?? 1;
+  if (pisos > 1) partes.push(`piso ${(me.floor ?? 0) + 1} de ${pisos}`);
 
   if (me.active) {
     partes.push(`te toca · ${me.ap ?? 0} PA`);

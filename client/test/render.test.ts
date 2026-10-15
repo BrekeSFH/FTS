@@ -24,6 +24,7 @@ function contextoFalso() {
     lineWidth: 0,
     font: '',
     textAlign: '',
+    textBaseline: '',
     setTransform: () => {},
     translate: () => {},
     fillRect: () => {},
@@ -103,5 +104,23 @@ describe('renderLobby con niebla', () => {
     renderLobby(canvas, estado(), { ownSessionId: 'yo', floors: [TILE], vision: vista([0, 2], []) });
 
     expect(textos).toEqual(expect.arrayContaining(['Yo', 'Otro']));
+  });
+});
+
+describe('renderLobby con escaleras', () => {
+  it('marca hacia dónde lleva cada escalera', () => {
+    const { canvas, textos } = contextoFalso();
+    const conEscaleras: LobbyState = { ...estado(), cells: '>.<' };
+    renderLobby(canvas, conEscaleras, { ownSessionId: 'yo', floors: [TILE] });
+
+    expect(textos).toEqual(expect.arrayContaining(['▼', '▲']));
+  });
+
+  it('una escalera nunca vista no se delata', () => {
+    const { canvas, textos } = contextoFalso();
+    const conEscaleras: LobbyState = { ...estado(), cells: '..>' };
+    renderLobby(canvas, conEscaleras, { ownSessionId: 'yo', floors: [TILE], vision: vista([0], []) });
+
+    expect(textos).not.toContain('▼');
   });
 });

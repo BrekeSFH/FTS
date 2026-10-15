@@ -6,13 +6,15 @@
  * se puede deducir del cliente sin volver a implementar las reglas, y el
  * punto 2 exige que las reglas vivan en el servidor.
  */
-import { MapSchema, schema, t } from '@colyseus/schema';
+import { ArraySchema, MapSchema, schema, t } from '@colyseus/schema';
 
 export const Combatant = schema(
   {
     /** Celda ocupada. El servidor es la única autoridad sobre estos valores. */
     x: t.uint16(),
     y: t.uint16(),
+    /** En qué piso de la mazmorra está, empezando en 0. */
+    floor: t.uint8(),
     /** Nombre visible, saneado por el servidor. */
     name: t.string(),
     /** Tono fijo por jugador, para distinguirlos en pantalla. */
@@ -43,8 +45,13 @@ export const VaultState = schema(
   {
     width: t.uint16(),
     height: t.uint16(),
-    /** Una celda por carácter, fila por fila; ver `map.ts`. */
-    cells: t.string(),
+    /**
+     * Los pisos de la mazmorra, uno por elemento, en el formato de `map.ts`.
+     *
+     * No hay un `cells` como en el lobby porque no hay un mapa único: cada
+     * uno dibuja el piso en el que está. Todos comparten ancho y alto.
+     */
+    floors: t.array('string'),
     /**
      * Semilla con la que cada cliente elige sus tiles.
      *
@@ -69,4 +76,4 @@ export const VaultState = schema(
 
 export type CombatantType = InstanceType<typeof Combatant>;
 export type VaultStateType = InstanceType<typeof VaultState>;
-export { MapSchema };
+export { ArraySchema, MapSchema };

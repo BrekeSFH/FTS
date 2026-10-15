@@ -75,3 +75,18 @@ describe('turnHud', () => {
     });
   });
 });
+
+describe('turnHud con varios pisos', () => {
+  it('dice en qué piso se está', () => {
+    const hud = turnHud(
+      sala({ round: 1, floors: ['..', '..', '..'] }),
+      jugador({ party: 'Yermo', floor: 1, ap: 6, active: true }),
+    );
+    expect(hud.text).toContain('piso 2 de 3');
+  });
+
+  it('con un piso solo no lo menciona', () => {
+    const hud = turnHud(sala({ round: 1, floors: ['..'] }), jugador({ active: true, ap: 6 }));
+    expect(hud.text).not.toContain('piso');
+  });
+});

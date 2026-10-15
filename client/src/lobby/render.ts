@@ -96,11 +96,20 @@ export interface RenderOptions {
 
 /** Carácter con el que el servidor marca una pared. */
 const WALL = '#';
+/** Escaleras de la Vault: `>` baja al piso siguiente, `<` sube al anterior. */
+const STAIRS_DOWN = '>';
+const STAIRS_UP = '<';
 
 /** Si el mapa declara pared en esa celda. Fuera del mapa cuenta como roca. */
 function esPared(state: LobbyState, gx: number, gy: number): boolean {
   if (gx < 0 || gy < 0 || gx >= state.width || gy >= state.height) return true;
   return state.cells?.[gy * state.width + gx] === WALL;
+}
+
+/** Qué escalera hay en una celda, si hay alguna. */
+function escaleraEn(state: LobbyState, gx: number, gy: number): 'down' | 'up' | null {
+  const c = state.cells?.[gy * state.width + gx];
+  return c === STAIRS_DOWN ? 'down' : c === STAIRS_UP ? 'up' : null;
 }
 
 /** Radio del punto que representa a un jugador. */
@@ -145,6 +154,31 @@ function strokeDiamond(context: CanvasRenderingContext2D, x: number, y: number):
   context.lineTo(x, y + HALF_HEIGHT);
   context.closePath();
   context.stroke();
+}
+
+/**
+ * Marca de una escalera: el rombo relleno y una flecha hacia donde lleva.
+ *
+ * Es un marcador y no un tile del juego. Las escaleras del catálogo ocupan
+ * más de una celda, y ordenar objetos así es justo lo que el render todavía
+ * no resuelve; ver el GDD.
+ */
+function drawStairs(context: CanvasRenderingContext2D, gx: number, gy: number, hacia: 'down' | 'up'): void {
+  const { x, y } = gridToScreen(gx, gy);
+  context.beginPath();
+  context.moveTo(x + HALF_WIDTH, y);
+  context.lineTo(x + HALF_WIDTH * 2, y + HALF_HEIGHT);
+  context.lineTo(x + HALF_WIDTH, y + HALF_HEIGHT * 2);
+  context.lineTo(x, y + HALF_HEIGHT);
+  context.closePath();
+  context.fillStyle = hacia === 'down' ? 'rgba(20, 120, 160, 0.55)' : 'rgba(170, 130, 30, 0.55)';
+  context.fill();
+  context.fillStyle = '#ffffff';
+  context.font = 'bold 14px system-ui, sans-serif';
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.fillText(hacia === 'down' ? '▼' : '▲', x + HALF_WIDTH, y + HALF_HEIGHT);
+  context.textBaseline = 'alphabetic';
 }
 
 function drawPlayer(
@@ -272,6 +306,8 @@ export function renderLobby(
         const { x, y } = gridToScreen(cell.x, cell.y);
         strokeDiamond(context, x, y);
       }
+      const escalera = escaleraEn(state, cell.x, cell.y);
+      if (escalera) drawStairs(context, cell.x, cell.y, escalera);
       context.globalAlpha = 1;
     }
 

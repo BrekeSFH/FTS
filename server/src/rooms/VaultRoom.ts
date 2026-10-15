@@ -12,9 +12,25 @@
 import { Client, Room } from '@colyseus/core';
 import { whoCanAct, type Combatant as Luchador } from './contact';
 import { DEFAULT_FACING, facingFromStep } from './direction';
-import { floorCells, generateMap, isBlocked, randomSeed, type GeneratedMap } from './map';
+import {
+  STAIRS_DOWN,
+  STAIRS_UP,
+  floorCells,
+  generateDungeon,
+  isBlocked,
+  randomSeed,
+  type Cell,
+  type DungeonFloor,
+} from './map';
 import { endTurn, join, leave, remainingMs, startInstance, tick, type TurnState } from './turns';
-import { Combatant, MapSchema, VaultState, type VaultStateType } from './vaultState';
+import {
+  ArraySchema,
+  Combatant,
+  MapSchema,
+  VaultState,
+  type CombatantType,
+  type VaultStateType,
+} from './vaultState';
 import { SIGHT_RADIUS, visibleMask } from './vision';
 
 type VaultRoomOptions = { state: VaultStateType };
@@ -25,6 +41,13 @@ export const MAX_CLIENTS = 16;
 
 /** Mazmorra con más salas que el lobby: hace falta sitio para perderse. */
 const MAP_OPTIONS = { rooms: 7, minRoom: 4, maxRoom: 8 };
+
+/**
+ * Pisos de la mazmorra. Con tres ya hay un piso del medio, que es el único
+ * que tiene las dos escaleras y donde se cruza gente que sube con gente que
+ * baja.
+ */
+export const VAULT_FLOORS = 3;
 
 /**
  * Pasos por turno. Con menos, cruzar una sala lleva rondas enteras; con más,
@@ -49,6 +72,11 @@ export const VISION_MESSAGE = 'vision';
 export interface VisionMessage {
   width: number;
   cells: string;
+  /**
+   * De qué piso es la máscara. Sin esto el cliente no podría separar lo
+   * explorado de cada piso: todos tienen el mismo ancho.
+   */
+  floor: number;
 }
 
 export interface MoveMessage {
@@ -85,7 +113,7 @@ export function sanitizeParty(raw: unknown, fallback: string): string {
 export class VaultRoom extends Room<VaultRoomOptions> {
   maxClients = MAX_CLIENTS;
 
-  map: GeneratedMap = generateMap(VAULT_WIDTH, VAULT_HEIGHT, 1, MAP_OPTIONS);
+  floors: DungeonFloor[] = generateDungeon(VAULT_WIDTH, VAULT_HEIGHT, 1, VAULT_FLOORS, MAP_OPTIONS);
 
   /**
    * El reloj de rondas. Es `null` hasta que entra el primero: una instancia
@@ -98,13 +126,13 @@ export class VaultRoom extends Room<VaultRoomOptions> {
 
   override onCreate(options: { seed?: number } = {}): void {
     const seed = options.seed ?? randomSeed();
-    this.map = generateMap(VAULT_WIDTH, VAULT_HEIGHT, seed, MAP_OPTIONS);
+    this.floors = generateDungeon(VAULT_WIDTH, VAULT_HEIGHT, seed, VAULT_FLOORS, MAP_OPTIONS);
     this.siguienteTirada = seed;
 
     this.state = new VaultState({
-      width: this.map.width,
-      height: this.map.height,
-      cells: this.map.cells,
+      width: VAULT_WIDTH,
+      height: VAULT_HEIGHT,
+      floors: new ArraySchema<string>(...this.floors.map((f) => f.cells)),
       tileSeed: seed,
       round: 0,
       remainingMs: 0,
@@ -131,7 +159,8 @@ export class VaultRoom extends Room<VaultRoomOptions> {
   }
 
   override onJoin(client: Client, options: JoinOptions = {}): void {
-    const spawn = this.findFreeCell();
+    // Todos entran por arriba: bajar es lo que se juega.
+    const spawn = this.findFreeCell(0);
     if (!spawn) throw new Error('No hay celdas libres en la Vault');
 
     const n = this.state.players.size;
@@ -140,6 +169,7 @@ export class VaultRoom extends Room<VaultRoomOptions> {
       new Combatant({
         x: spawn.x,
         y: spawn.y,
+        floor: 0,
         name: sanitizeName(options.name, `Jugador ${n + 1}`),
         hue: (n * 67) % 360,
         facing: DEFAULT_FACING,
@@ -187,19 +217,36 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     return (x % 20) + 1;
   }
 
-  /** Los combatientes en la forma que entiende `contact.ts`. */
-  private luchadores(): Luchador[] {
+  /** El mapa de un piso. */
+  mapOf(floor: number): DungeonFloor {
+    return this.floors[floor];
+  }
+
+  /** Los combatientes de un piso, en la forma que entiende `contact.ts`. */
+  private luchadores(floor: number): Luchador[] {
     const out: Luchador[] = [];
     for (const [id, c] of this.state.players) {
+      if (c.floor !== floor) continue;
       out.push({ id, party: c.party, x: c.x, y: c.y, initiative: c.initiative });
     }
     return out;
   }
 
-  /** Quiénes pueden actuar en este instante. */
+  /**
+   * Quiénes pueden actuar en este instante.
+   *
+   * El contacto se resuelve piso por piso: la línea de visión no atraviesa
+   * el techo, así que dos parties en pisos distintos nunca se detectan y
+   * cada una sigue jugando en paralelo aunque estén una encima de la otra.
+   */
   activos(): Set<string> {
     if (!this.turns) return new Set();
-    return whoCanAct(this.map, this.luchadores(), new Set(this.turns.pending));
+    const pendientes = new Set(this.turns.pending);
+    const puede = new Set<string>();
+    for (let floor = 0; floor < this.floors.length; floor++) {
+      for (const id of whoCanAct(this.mapOf(floor), this.luchadores(floor), pendientes)) puede.add(id);
+    }
+    return puede;
   }
 
   /**
@@ -261,35 +308,85 @@ export class VaultRoom extends Room<VaultRoomOptions> {
 
     const x = combatant.x + dx;
     const y = combatant.y + dy;
-    if (isBlocked(this.map, x, y)) return false;
-    if (this.isOccupied(x, y)) return false;
+    if (isBlocked(this.mapOf(combatant.floor), x, y)) return false;
+    if (this.isOccupied(combatant.floor, x, y)) return false;
 
     combatant.x = x;
     combatant.y = y;
     combatant.ap -= 1;
+    this.takeStairs(combatant);
     // Sin acción no queda nada que hacer: el turno se cierra solo, para no
     // obligar a apretar un botón que no tiene alternativa.
     if (combatant.ap === 0) this.endTurn(sessionId);
     return true;
   }
 
-  isOccupied(x: number, y: number): boolean {
+  isOccupied(floor: number, x: number, y: number): boolean {
     for (const [, c] of this.state.players) {
-      if (c.x === x && c.y === y) return true;
+      if (c.floor === floor && c.x === x && c.y === y) return true;
     }
     return false;
+  }
+
+  /**
+   * Si quedó parado en una escalera, lo pasa al otro piso.
+   *
+   * El paso que lo llevó hasta la escalera ya costó su punto; cambiar de piso
+   * no cuesta otro, para que bajar no sea más caro que caminar. Aparece sobre
+   * la escalera de vuelta, y si alguien la está ocupando, en la celda libre
+   * más cercana: dejarlo arriba sin avisar parecería que la escalera no anda.
+   */
+  private takeStairs(combatant: CombatantType): void {
+    const map = this.mapOf(combatant.floor);
+    const celda = map.cells[combatant.y * map.width + combatant.x];
+    const destino =
+      celda === STAIRS_DOWN ? combatant.floor + 1 : celda === STAIRS_UP ? combatant.floor - 1 : null;
+    if (destino === null || destino < 0 || destino >= this.floors.length) return;
+
+    const piso = this.mapOf(destino);
+    const llegada = celda === STAIRS_DOWN ? piso.up : piso.down;
+    if (!llegada) return;
+    const libre = this.nearestFreeCell(destino, llegada);
+    if (!libre) return;
+
+    combatant.floor = destino;
+    combatant.x = libre.x;
+    combatant.y = libre.y;
+  }
+
+  /**
+   * La celda libre más cercana a otra, contando en pasos de ocho
+   * direcciones, que es como se camina. Recorre anillos alrededor del punto,
+   * así que la primera que encuentra es de las más cercanas.
+   */
+  nearestFreeCell(floor: number, desde: Cell): Cell | null {
+    const map = this.mapOf(floor);
+    const libre = (x: number, y: number) => !isBlocked(map, x, y) && !this.isOccupied(floor, x, y);
+    const radioMax = Math.max(map.width, map.height);
+    for (let r = 0; r <= radioMax; r++) {
+      for (let y = desde.y - r; y <= desde.y + r; y++) {
+        for (let x = desde.x - r; x <= desde.x + r; x++) {
+          // Solo el borde del anillo: lo de adentro ya se miró.
+          if (Math.max(Math.abs(x - desde.x), Math.abs(y - desde.y)) !== r) continue;
+          if (libre(x, y)) return { x, y };
+        }
+      }
+    }
+    return null;
   }
 
   /** Qué ve un combatiente, o `null` si no está en la sala. */
   visionFor(sessionId: string): string | null {
     const c = this.state.players.get(sessionId);
     if (!c) return null;
-    return visibleMask(this.map, c.x, c.y, SIGHT_RADIUS);
+    return visibleMask(this.mapOf(c.floor), c.x, c.y, SIGHT_RADIUS);
   }
 
   private sendVision(client: Client): void {
+    const c = this.state.players.get(client.sessionId);
     const cells = this.visionFor(client.sessionId);
-    if (cells) client.send(VISION_MESSAGE, { width: this.map.width, cells } satisfies VisionMessage);
+    if (!c || !cells) return;
+    client.send(VISION_MESSAGE, { width: VAULT_WIDTH, cells, floor: c.floor } satisfies VisionMessage);
   }
 
   /**
@@ -297,19 +394,20 @@ export class VaultRoom extends Room<VaultRoomOptions> {
    * bandos aparezcan uno al lado del otro haría que el contacto fuera
    * inmediato y no se vería nunca el juego en paralelo.
    */
-  private findFreeCell(): { x: number; y: number } | null {
-    const salas = this.map.rooms;
+  private findFreeCell(floor: number): Cell | null {
+    const map = this.mapOf(floor);
+    const salas = map.rooms;
     const desde = this.state.players.size % Math.max(1, salas.length);
     for (let i = 0; i < salas.length; i++) {
       const room = salas[(desde + i) % salas.length];
       for (let y = room.y; y < room.y + room.height; y++) {
         for (let x = room.x; x < room.x + room.width; x++) {
-          if (!isBlocked(this.map, x, y) && !this.isOccupied(x, y)) return { x, y };
+          if (!isBlocked(map, x, y) && !this.isOccupied(floor, x, y)) return { x, y };
         }
       }
     }
-    for (const { x, y } of floorCells(this.map)) {
-      if (!this.isOccupied(x, y)) return { x, y };
+    for (const { x, y } of floorCells(map)) {
+      if (!this.isOccupied(floor, x, y)) return { x, y };
     }
     return null;
   }

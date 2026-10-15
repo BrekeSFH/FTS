@@ -17,6 +17,10 @@
 
 export const FLOOR = '.';
 export const WALL = '#';
+/** Escalera que baja al piso siguiente. Se camina como un piso más. */
+export const STAIRS_DOWN = '>';
+/** Escalera que sube al piso anterior. */
+export const STAIRS_UP = '<';
 
 export interface GameMap {
   width: number;
@@ -171,4 +175,71 @@ export function generateMap(
   }
 
   return { width, height, cells: cells.join(''), rooms: placed };
+}
+
+export interface Cell {
+  x: number;
+  y: number;
+}
+
+export interface DungeonFloor extends GeneratedMap {
+  /** Dónde se baja al piso siguiente. `null` en el último. */
+  down: Cell | null;
+  /** Dónde se sube al anterior. `null` en el primero. */
+  up: Cell | null;
+}
+
+/**
+ * Semilla de cada piso, derivada de la de la instancia.
+ *
+ * Con la misma semilla en todos, los pisos saldrían idénticos y bajar no
+ * cambiaría nada. Se mezcla con una constante impar para que pisos vecinos
+ * no den semillas vecinas.
+ */
+function seedOfFloor(seed: number, floor: number): number {
+  return ((seed ^ Math.imul(floor + 1, 0x9e37_79b9)) >>> 0) || 1;
+}
+
+/** Cambia una celda de una cadena de mapa. */
+function marcar(map: GameMap, { x, y }: Cell, c: string): string {
+  const i = y * map.width + x;
+  return map.cells.slice(0, i) + c + map.cells.slice(i + 1);
+}
+
+/**
+ * Una mazmorra de varios pisos, como pide el punto 3 del GDD.
+ *
+ * Cada piso es un mapa de `generateMap` con su propia semilla. Se llega de
+ * uno al otro por escaleras: la de subida va en la primera sala y la de
+ * bajada en la última. Como cada sala se conecta con la anterior, las dos
+ * quedan en la misma red de pasillos, y suelen quedar lejos, porque la
+ * cadena de salas recorre el mapa. Con una sola sala se ponen en esquinas
+ * opuestas, para que nunca caigan en la misma celda.
+ */
+export function generateDungeon(
+  width: number,
+  height: number,
+  seed: number,
+  floors: number,
+  options: GenerateOptions = {},
+): DungeonFloor[] {
+  if (!Number.isInteger(floors) || floors < 1) throw new Error(`Cantidad de pisos inválida: ${floors}`);
+
+  const out: DungeonFloor[] = [];
+  for (let n = 0; n < floors; n++) {
+    const map = generateMap(width, height, seedOfFloor(seed, n), options);
+    const primera = map.rooms[0];
+    const ultima = map.rooms[map.rooms.length - 1];
+    const up = n > 0 ? center(primera) : null;
+    let down = n < floors - 1 ? center(ultima) : null;
+    if (up && down && up.x === down.x && up.y === down.y) {
+      down = { x: ultima.x + ultima.width - 1, y: ultima.y + ultima.height - 1 };
+    }
+
+    let cells: GameMap = map;
+    if (up) cells = { ...cells, cells: marcar(cells, up, STAIRS_UP) };
+    if (down) cells = { ...cells, cells: marcar(cells, down, STAIRS_DOWN) };
+    out.push({ ...map, cells: cells.cells, up, down });
+  }
+  return out;
 }

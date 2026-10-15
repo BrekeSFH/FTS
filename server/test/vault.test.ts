@@ -9,10 +9,12 @@
 import { boot, type ColyseusTestServer } from '@colyseus/testing';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { VAULT_ROOM, createServer } from '../src/createServer';
-import { isBlocked } from '../src/rooms/map';
+import { FLOOR, isBlocked } from '../src/rooms/map';
+import { SIGHT_RADIUS, visibleMask } from '../src/rooms/vision';
 import {
   AP_POR_TURNO,
   PARTIES,
+  VAULT_FLOORS,
   VAULT_HEIGHT,
   VAULT_WIDTH,
   VISION_MESSAGE,
@@ -54,8 +56,14 @@ function sincronizarRonda(room: VaultRoom): void {
   room.publish();
 }
 
-/** Un paso que el mapa acepte desde esa celda, o `null` si está encerrada. */
-function pasoLibre(room: VaultRoom, x: number, y: number): { dx: number; dy: number } | null {
+/**
+ * Un paso que el mapa acepte desde esa celda, o `null` si está encerrada.
+ *
+ * Esquiva las escaleras: un paso que cambia de piso no es lo que quieren
+ * comprobar los tests que lo usan.
+ */
+function pasoLibre(room: VaultRoom, x: number, y: number, floor = 0): { dx: number; dy: number } | null {
+  const map = room.mapOf(floor);
   const candidatos = [
     { dx: 1, dy: 0 },
     { dx: 0, dy: 1 },
@@ -64,7 +72,10 @@ function pasoLibre(room: VaultRoom, x: number, y: number): { dx: number; dy: num
   ];
   return (
     candidatos.find(
-      ({ dx, dy }) => !isBlocked(room.map, x + dx, y + dy) && !room.isOccupied(x + dx, y + dy),
+      ({ dx, dy }) =>
+        !isBlocked(map, x + dx, y + dy) &&
+        !room.isOccupied(floor, x + dx, y + dy) &&
+        map.cells[(y + dy) * map.width + x + dx] === FLOOR,
     ) ?? null
   );
 }
@@ -87,9 +98,27 @@ describe('la Vault', () => {
     const client = await entrar(room);
 
     expect([room.state.width, room.state.height]).toEqual([VAULT_WIDTH, VAULT_HEIGHT]);
-    expect(room.state.cells).toHaveLength(VAULT_WIDTH * VAULT_HEIGHT);
+    expect(room.state.floors).toHaveLength(VAULT_FLOORS);
+    for (const cells of room.state.floors) expect(cells).toHaveLength(VAULT_WIDTH * VAULT_HEIGHT);
+    expect(room.state.players.get(client.sessionId)!.floor, 'se entra por arriba').toBe(0);
     expect(room.state.round).toBe(1);
     expect(room.state.players.get(client.sessionId)!.ap).toBe(AP_POR_TURNO);
+  });
+
+  it('el cliente recibe los pisos y en cuál está cada uno', async () => {
+    // El cliente indexa `floors` como un arreglo; esto comprueba que el SDK
+    // lo decodifica así y no como algo que haya que recorrer.
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const client = await entrar(room);
+    await room.waitForNextPatch();
+
+    const state = client.state as unknown as {
+      floors: ArrayLike<string>;
+      players: Map<string, { floor: number }>;
+    };
+    expect(state.floors.length).toBe(VAULT_FLOORS);
+    expect(state.floors[1]).toBe(room.mapOf(1).cells);
+    expect(state.players.get(client.sessionId)!.floor).toBe(0);
   });
 
   it('reparte parties distintas para que haya dos bandos', async () => {
@@ -119,7 +148,7 @@ describe('la Vault', () => {
       await entrar(room);
       await entrar(room);
       const out = {
-        cells: room.state.cells,
+        floors: [...room.state.floors],
         iniciativas: [...room.state.players.values()].map((c) => c.initiative),
       };
       await room.disconnect();
@@ -308,5 +337,104 @@ describe('entradas y salidas', () => {
     await room.waitForNextPatch();
     expect(room.state.players.has(dos.sessionId)).toBe(false);
     expect(room.state.round, 'solo faltaba él').toBe(ronda + 1);
+  });
+});
+
+describe('los pisos de la Vault', () => {
+  /** Para a alguien al lado de una celda, con turno y acción para dar el paso. */
+  function pararAlLado(room: VaultRoom, sessionId: string, floor: number, celda: { x: number; y: number }) {
+    const c = room.state.players.get(sessionId)!;
+    const map = room.mapOf(floor);
+    const paso = [
+      { dx: 1, dy: 0 },
+      { dx: -1, dy: 0 },
+      { dx: 0, dy: 1 },
+      { dx: 0, dy: -1 },
+    ].find(({ dx, dy }) => !isBlocked(map, celda.x - dx, celda.y - dy))!;
+    c.floor = floor;
+    c.x = celda.x - paso.dx;
+    c.y = celda.y - paso.dy;
+    c.ap = AP_POR_TURNO;
+    return paso;
+  }
+
+  it('pisar la escalera de bajada lleva a la de subida del piso siguiente', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const client = await entrar(room);
+    const paso = pararAlLado(room, client.sessionId, 0, room.mapOf(0).down!);
+
+    expect(room.tryMove(client.sessionId, paso)).toBe(true);
+    const c = room.state.players.get(client.sessionId)!;
+    expect(c.floor).toBe(1);
+    expect({ x: c.x, y: c.y }).toEqual(room.mapOf(1).up);
+    expect(c.ap, 'cambiar de piso no cuesta más que el paso').toBe(AP_POR_TURNO - 1);
+  });
+
+  it('y la de subida devuelve a la de bajada del anterior', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const client = await entrar(room);
+    const paso = pararAlLado(room, client.sessionId, 1, room.mapOf(1).up!);
+
+    expect(room.tryMove(client.sessionId, paso)).toBe(true);
+    const c = room.state.players.get(client.sessionId)!;
+    expect(c.floor).toBe(0);
+    expect({ x: c.x, y: c.y }).toEqual(room.mapOf(0).down);
+  });
+
+  it('si la llegada está ocupada aparece en la celda libre más cercana', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const uno = await entrar(room);
+    const dos = await entrar(room);
+    sincronizarRonda(room);
+    const llegada = room.mapOf(1).up!;
+    const bloqueo = room.state.players.get(dos.sessionId)!;
+    bloqueo.floor = 1;
+    bloqueo.x = llegada.x;
+    bloqueo.y = llegada.y;
+
+    const paso = pararAlLado(room, uno.sessionId, 0, room.mapOf(0).down!);
+    expect(room.tryMove(uno.sessionId, paso)).toBe(true);
+    const c = room.state.players.get(uno.sessionId)!;
+    expect(c.floor).toBe(1);
+    expect({ x: c.x, y: c.y }).not.toEqual(llegada);
+    expect(Math.max(Math.abs(c.x - llegada.x), Math.abs(c.y - llegada.y))).toBe(1);
+  });
+
+  it('dos en la misma celda de pisos distintos no se estorban', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const uno = await entrar(room);
+    const yo = room.state.players.get(uno.sessionId)!;
+    expect(room.isOccupied(0, yo.x, yo.y)).toBe(true);
+    expect(room.isOccupied(1, yo.x, yo.y)).toBe(false);
+  });
+
+  it('parties en pisos distintos no entran en contacto', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const uno = await entrar(room);
+    const dos = await entrar(room);
+    sincronizarRonda(room);
+    // Uno encima del otro: en el mismo piso se verían seguro.
+    const celda = room.mapOf(0).rooms[0];
+    for (const [id, floor] of [[uno.sessionId, 0], [dos.sessionId, 1]] as const) {
+      const c = room.state.players.get(id)!;
+      c.floor = floor;
+      c.x = celda.x;
+      c.y = celda.y;
+    }
+    room.publish();
+    expect(room.activos()).toEqual(new Set([uno.sessionId, dos.sessionId]));
+  });
+
+  it('la máscara es la del piso en el que se está', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const client = await entrar(room);
+    const paso = pararAlLado(room, client.sessionId, 0, room.mapOf(0).down!);
+    room.tryMove(client.sessionId, paso);
+
+    const c = room.state.players.get(client.sessionId)!;
+    const mask = room.visionFor(client.sessionId)!;
+    expect(mask[c.y * VAULT_WIDTH + c.x]).toBe('1');
+    expect(mask).toBe(visibleMask(room.mapOf(1), c.x, c.y, SIGHT_RADIUS));
+    expect(mask, 'con el mapa de arriba saldría otra').not.toBe(visibleMask(room.mapOf(0), c.x, c.y, SIGHT_RADIUS));
   });
 });

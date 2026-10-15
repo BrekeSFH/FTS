@@ -16,7 +16,8 @@ import {
   type LobbyPlayer,
   type LobbyRoom,
 } from './connection';
-import { createFog } from './fog';
+import { floorView, ownFloor } from './floors';
+import { createFog, type Fog } from './fog';
 import { turnHud } from './hud';
 import { renderLobby, type PlacedTile, type WallSet } from './render';
 
@@ -64,11 +65,17 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
   let corner: WallSet | null = null;
   let character: LoadedAnimation | null = null;
   /**
-   * Lo que el jugador ve y lo que ya vio. Se rehace en cada conexión: el
-   * servidor genera una mazmorra nueva por sala, así que lo explorado de la
-   * anterior no significa nada.
+   * Lo que el jugador ve y lo que ya vio, una niebla por piso: todos tienen
+   * el mismo ancho, y con una sola lo explorado arriba aparecería abajo. Se
+   * rehace en cada conexión: el servidor genera una mazmorra nueva por sala,
+   * así que lo explorado de la anterior no significa nada.
    */
-  let fog = createFog();
+  let fogs = new Map<number, Fog>();
+  const fogOf = (floor: number): Fog => {
+    let fog = fogs.get(floor);
+    if (!fog) fogs.set(floor, (fog = createFog()));
+    return fog;
+  };
   /** Última semilla avisada, para no rearmar el tablero en cada parche. */
   let tileSeed: number | null = null;
 
@@ -91,7 +98,8 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     // puede no haber nada que dibujar todavía. El primer `onStateChange` lo
     // resuelve enseguida.
     if (!room?.state?.players) return;
-    renderLobby(ui.canvas, room.state, {
+    const fog = fogOf(ownFloor(room.state, room.sessionId));
+    renderLobby(ui.canvas, floorView(room.state, room.sessionId), {
       ownSessionId: room.sessionId,
       floors,
       wall,
@@ -215,9 +223,9 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
         ui.board.hidden = false;
         setStatus(`Conectado como ${joined.sessionId}.`);
 
-        fog = createFog();
-        onVision(joined, ({ width, cells }) => {
-          fog.update(cells, width);
+        fogs = new Map();
+        onVision(joined, ({ width, cells, floor }) => {
+          fogOf(floor ?? 0).update(cells, width);
           draw();
         });
         // El servidor ya la empujó al entrar, pero ese empujón pudo salir

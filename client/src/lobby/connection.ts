@@ -25,6 +25,8 @@ export interface VisionMessage {
   width: number;
   /** Una celda por carácter, fila por fila. `1` es visible. */
   cells: string;
+  /** De qué piso es la máscara. Solo en la Vault; el lobby tiene uno solo. */
+  floor?: number;
 }
 
 /**
@@ -38,6 +40,8 @@ export interface VisionMessage {
 export interface LobbyPlayer {
   x: number;
   y: number;
+  /** En qué piso está. Solo en la Vault; ver `floors.ts`. */
+  floor?: number;
   name: string;
   hue: number;
   /** Octante al que mira, 0 a 7. Lo decide el servidor al moverse. */
@@ -61,8 +65,14 @@ export interface LobbyPlayer {
 export interface LobbyState {
   width: number;
   height: number;
-  /** El mapa: una celda por carácter, fila por fila. `#` es pared. */
-  cells: string;
+  /**
+   * El mapa: una celda por carácter, fila por fila. `#` es pared, `>` baja
+   * al piso siguiente y `<` sube al anterior. La Vault no lo manda, porque
+   * tiene varios; `floorView` lo completa con el piso propio.
+   */
+  cells?: string;
+  /** Los pisos de la mazmorra, en el mismo formato. Solo en la Vault. */
+  floors?: ArrayLike<string>;
   /**
    * Semilla con la que elegir los tiles. La manda el servidor en vez de los
    * tiles mismos: no puede alojar assets del juego.

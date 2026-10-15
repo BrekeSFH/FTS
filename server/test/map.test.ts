@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { FLOOR, WALL, floorCells, generateMap, isBlocked, type GameMap } from '../src/rooms/map';
+import {
+  FLOOR,
+  STAIRS_DOWN,
+  STAIRS_UP,
+  WALL,
+  floorCells,
+  generateDungeon,
+  generateMap,
+  isBlocked,
+  type GameMap,
+} from '../src/rooms/map';
 
 const filas = (map: GameMap) =>
   Array.from({ length: map.height }, (_, y) => map.cells.slice(y * map.width, (y + 1) * map.width));
@@ -114,5 +124,50 @@ describe('floorCells', () => {
     const libres = floorCells(map);
     expect(libres).toHaveLength(filas(map).join('').split('').filter((c) => c === FLOOR).length);
     for (const { x, y } of libres) expect(isBlocked(map, x, y)).toBe(false);
+  });
+});
+
+describe('generateDungeon', () => {
+  const celda = (map: GameMap, c: { x: number; y: number }) => map.cells[c.y * map.width + c.x];
+
+  it('pone una escalera de bajada en cada piso salvo el último, y de subida salvo el primero', () => {
+    const pisos = generateDungeon(40, 30, 7, 3);
+    expect(pisos).toHaveLength(3);
+    expect(pisos[0].up).toBeNull();
+    expect(pisos[2].down).toBeNull();
+    for (const [n, piso] of pisos.entries()) {
+      const cuenta = (c: string) => [...piso.cells].filter((x) => x === c).length;
+      expect(cuenta(STAIRS_DOWN), `bajadas del piso ${n}`).toBe(n < 2 ? 1 : 0);
+      expect(cuenta(STAIRS_UP), `subidas del piso ${n}`).toBe(n > 0 ? 1 : 0);
+      if (piso.down) expect(celda(piso, piso.down)).toBe(STAIRS_DOWN);
+      if (piso.up) expect(celda(piso, piso.up)).toBe(STAIRS_UP);
+    }
+  });
+
+  it('las escaleras se caminan y todo el piso sigue conectado', () => {
+    for (const seed of [1, 7, 42, 1000]) {
+      for (const piso of generateDungeon(40, 30, seed, 3)) {
+        for (const c of [piso.up, piso.down]) if (c) expect(isBlocked(piso, c.x, c.y)).toBe(false);
+        expect(alcanzables(piso), `semilla ${seed}`).toBe(floorCells(piso).length);
+      }
+    }
+  });
+
+  it('cada piso es distinto', () => {
+    const pisos = generateDungeon(40, 30, 7, 3);
+    expect(new Set(pisos.map((p) => p.cells)).size).toBe(3);
+  });
+
+  it('con la misma semilla sale la misma mazmorra', () => {
+    expect(generateDungeon(40, 30, 99, 3)).toEqual(generateDungeon(40, 30, 99, 3));
+  });
+
+  it('con una sola sala las dos escaleras no caen en la misma celda', () => {
+    const pisos = generateDungeon(20, 20, 3, 3, { rooms: 1 });
+    expect(pisos[1].up).not.toEqual(pisos[1].down);
+  });
+
+  it('rechaza una mazmorra sin pisos', () => {
+    expect(() => generateDungeon(40, 30, 1, 0)).toThrow();
   });
 });
