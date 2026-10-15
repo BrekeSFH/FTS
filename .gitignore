@@ -6,6 +6,9 @@ build/
 *.log
 .DS_Store
 
+# Los alijos de un servidor de desarrollo
+server/data/
+
 # Assets del juego original: nunca se versionan
 client/public/dev/
 *.bos

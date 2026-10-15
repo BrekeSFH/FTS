@@ -78,6 +78,8 @@
           <button id="lobby-connect" type="button">Conectar</button>
           <span id="lobby-status" class="muted" role="status"></span>
         </div>
+        <div id="lobby-stash" class="stash" hidden></div>
+        <div id="lobby-market" class="stash market" hidden></div>
         <div id="lobby-board" hidden>
           <div class="actions">
             <button id="lobby-fullscreen" type="button">Pantalla completa</button>
@@ -85,9 +87,27 @@
             <span id="lobby-turn" class="turn" role="status" hidden></span>
           </div>
           <canvas id="lobby-canvas"></canvas>
+          <p id="lobby-toast" class="toast" role="status" hidden></p>
+          <div id="lobby-pack">
+            <p id="lobby-load" class="muted" hidden></p>
+            <ul id="lobby-inventory" class="inventory" hidden></ul>
+          </div>
           <p class="hint">
-            Flechas o WASD para moverte; Q, E, Z y C para las diagonales. En la Vault cada
+            Se juega con el mouse: click en el piso para caminar hasta ahí, en un contenedor
+            o una puerta para ir a abrirlos y en un Saqueador para dispararle. En la Vault las
+            salas están unidas por puertas cerradas: abrir una cuesta un punto, y el camino
+            abre solo las que cruza. Al pasar el mouse se marca el
+            camino y, en la Vault, cuántos puntos cuesta. La rueda acerca y aleja. También
+            andan las flechas o WASD, y Q, E, Z y C para las diagonales. En la Vault cada
             paso gasta un punto de acción y el turno se cierra solo al quedarte sin ellos.
+            <kbd>F</kbd> abre un contenedor al lado tuyo por dos puntos y lo que tenga pasa a tu
+            mochila, debajo del tablero: cambiar de arma o de armadura cuesta un punto y usar un
+            estimulante, dos. Soltar algo cuesta uno y lo deja en el piso; la munición se suelta
+            toda junta. Se cargan hasta 25 kg, y cada disparo gasta una bala del tipo del arma,
+            menos con la pistola de emergencia. Las escaleras ▼ y ▲
+            llevan de un piso a otro, y pisar una SALIDA te saca con el botín. Click sobre otro
+            jugador o Saqueador para dispararle; cuántos puntos cuesta depende del arma. Si te
+            matan, todo lo que llevabas queda donde caíste.
             En pantalla completa, <kbd>Esc</kbd> para salir.
           </p>
         </div>

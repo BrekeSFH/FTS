@@ -6,13 +6,22 @@
  * se puede deducir del cliente sin volver a implementar las reglas, y el
  * punto 2 exige que las reglas vivan en el servidor.
  */
-import { MapSchema, schema, t } from '@colyseus/schema';
+import { ArraySchema, MapSchema, StateView, schema, t } from '@colyseus/schema';
+
+/**
+ * Etiqueta de lo que es solo de quien lo lleva. Es una etiqueta propia y no
+ * la de por defecto a propósito: un cliente puede tener a otro en su vista
+ * para verlo en el mapa sin que eso le muestre la mochila.
+ */
+export const PRIVADO = 1;
 
 export const Combatant = schema(
   {
     /** Celda ocupada. El servidor es la única autoridad sobre estos valores. */
     x: t.uint16(),
     y: t.uint16(),
+    /** En qué piso de la mazmorra está, empezando en 0. */
+    floor: t.uint8(),
     /** Nombre visible, saneado por el servidor. */
     name: t.string(),
     /** Tono fijo por jugador, para distinguirlos en pantalla. */
@@ -35,16 +44,89 @@ export const Combatant = schema(
      * dónde está el enemigo.
      */
     active: t.boolean(),
+    /**
+     * Cuánto vale lo que lleva encima: la suma de `items`. Es público a
+     * propósito: saber quién va cargado es lo que vuelve tentadora una
+     * emboscada.
+     */
+    loot: t.uint32(),
+    /**
+     * Lo que lleva, como ids del catálogo de `items.ts`. Solo lo recibe su
+     * dueño: viaja con la etiqueta `PRIVADO`, y cada cliente agrega con esa
+     * etiqueta únicamente a su propio combatiente. Lo que vale, en `loot`,
+     * sigue siendo de todos.
+     */
+    items: t.array('string').view(PRIVADO),
+    /**
+     * Arma equipada: un id que está en `items`. Pública, como la armadura:
+     * lo que alguien tiene en la mano se ve, lo que lleva en la mochila no.
+     */
+    weapon: t.string(),
+    /** Armadura equipada, o vacío. */
+    armor: t.string(),
+    /** Vida que le queda. Pública: se ve si alguien está herido. */
+    hp: t.uint8(),
+    /** Vida con la que entró, para poder decir cuánto le falta. */
+    maxHp: t.uint8(),
   },
   'Combatant',
+);
+
+/**
+ * Un contenedor para saquear.
+ *
+ * Lo que vale no se publica: el servidor lo guarda aparte y recién se sabe al
+ * abrirlo, en el botín de quien lo abrió. Publicarlo sería decirle a todos
+ * qué sala conviene revisar primero.
+ */
+export const LootCache = schema(
+  {
+    floor: t.uint8(),
+    x: t.uint16(),
+    y: t.uint16(),
+    /** Si ya lo vació alguien. Queda en el mapa, vacío. */
+    looted: t.boolean(),
+  },
+  'LootCache',
+);
+
+/**
+ * Una salida abierta: pisarla saca de la instancia con lo que se lleve.
+ *
+ * Que hay una y en qué piso lo saben todos: sin ese aviso, encontrarla a
+ * tiempo sería pura suerte. La celda exacta llega recién cuando alguien la
+ * ve, porque hay que ir a buscarla.
+ */
+export const ExitPoint = schema(
+  {
+    floor: t.uint8(),
+    x: t.uint16().view(),
+    y: t.uint16().view(),
+    /** Primera ronda en la que ya no está, para avisar cuánto le queda. */
+    closes: t.uint16(),
+  },
+  'ExitPoint',
 );
 
 export const VaultState = schema(
   {
     width: t.uint16(),
     height: t.uint16(),
-    /** Una celda por carácter, fila por fila; ver `map.ts`. */
-    cells: t.string(),
+    /**
+     * Cuántos pisos tiene la mazmorra. Los mapas no van en el estado: cada
+     * uno recibe por mensaje privado solo lo que ya vio de su piso, para que
+     * no se pueda espiar lo que no exploró. Todos comparten ancho y alto.
+     */
+    floorCount: t.uint8(),
+    /**
+     * Semilla con la que cada cliente elige sus tiles.
+     *
+     * El servidor no puede mandar los tiles: el modelo BYOG le prohíbe
+     * alojar assets del juego. Manda la semilla, y como todos resuelven el
+     * mismo catálogo de la misma manera, todos ven la misma mazmorra sin que
+     * un solo byte protegido pase por acá.
+     */
+    tileSeed: t.uint32(),
     /** Ronda en curso, empezando en 1. */
     round: t.uint16(),
     /** Cuánto queda del turno, en milisegundos. Cero si ya cerró. */
@@ -52,12 +134,24 @@ export const VaultState = schema(
     /**
      * Se llama igual que en el lobby a propósito: el render isométrico y la
      * niebla del cliente sirven para las dos salas sin tocar nada.
+     *
+     * Filtrado por jugador: a cada cliente le llega él mismo y quienes está
+     * viendo en este momento. Al que se pierde de vista se lo deja de mandar,
+     * así nadie puede seguir a otro por detrás de una pared.
      */
-    players: t.map(Combatant),
+    players: t.map(Combatant).view(),
+    /**
+     * Los contenedores de todos los pisos, en un orden fijo del lado del
+     * servidor. A cada cliente le llegan los que ya vio, y se los sigue
+     * mandando aunque deje de verlos: es parte del mapa que recuerda.
+     */
+    caches: t.array(LootCache).view(),
+    /** Las salidas abiertas en esta ronda. Cero o una, por ahora. */
+    exits: t.array(ExitPoint),
   },
   'VaultState',
 );
 
 export type CombatantType = InstanceType<typeof Combatant>;
 export type VaultStateType = InstanceType<typeof VaultState>;
-export { MapSchema };
+export { ArraySchema, MapSchema, StateView };

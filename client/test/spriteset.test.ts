@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DIRECTIONS, pickDirectionalAnimation } from '../src/iso/spriteset';
+import { DIRECTIONS, pickDirectionalAnimation, pickStandAnimation } from '../src/iso/spriteset';
 import { readSpriteAnimations } from '../src/sprites/sprite';
 
 const ascii = (text: string) => Array.from(text, (c) => c.charCodeAt(0));
@@ -71,5 +71,31 @@ describe('pickDirectionalAnimation', () => {
 
   it('los ocho rumbos son los que entiende el servidor', () => {
     expect(DIRECTIONS).toBe(8);
+  });
+});
+
+describe('elegir con qué arma camina y cómo se queda quieto', () => {
+  // Como el personaje de cuero de la instalación: muchas armas, varias posturas.
+  const PERSONAJE = makeSprite([
+    { name: 'LF Walk Club', frames: 12, directions: 8 },
+    { name: 'LF Crouch Walk Unarmed', frames: 12, directions: 8 },
+    { name: 'LF Walk Pistol', frames: 12, directions: 8 },
+    { name: 'LF Upright Stand Club', frames: 8, directions: 8 },
+    { name: 'LF Prone Stand Pistol', frames: 6, directions: 8 },
+    { name: 'LF Upright Stand Pistol', frames: 8, directions: 8 },
+    { name: 'LF Run', frames: 10, directions: 8 },
+  ]);
+
+  it('camina de pie y con pistola', () => {
+    expect(pickDirectionalAnimation(PERSONAJE)).toBe(2);
+  });
+
+  it('quieto, de pie y con la misma arma', () => {
+    expect(pickStandAnimation(PERSONAJE, 2)).toBe(5);
+    expect(pickStandAnimation(PERSONAJE, 0), 'con el garrote, el garrote').toBe(3);
+  });
+
+  it('sin animación quieta, -1', () => {
+    expect(pickStandAnimation(makeSprite([CAMINATA]), 0)).toBe(-1);
   });
 });

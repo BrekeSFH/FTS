@@ -6,6 +6,7 @@
  * estado sincronizado, nunca de una predicción local.
  */
 import { Client, type Room } from '@colyseus/sdk';
+import type { ShopMessage, TradeOffer, TradeRequest } from './market';
 
 export const LOBBY_ROOM = 'lobby';
 /** La sala de combate por turnos; ver `VaultRoom` del servidor. */
@@ -25,6 +26,14 @@ export interface VisionMessage {
   width: number;
   /** Una celda por carácter, fila por fila. `1` es visible. */
   cells: string;
+  /** De qué piso es la máscara. Solo en la Vault; el lobby tiene uno solo. */
+  floor?: number;
+  /**
+   * Lo que se sabe del mapa de ese piso: lo explorado tal cual y el resto
+   * como roca. Solo en la Vault, que no manda el mapa en el estado para que
+   * no se pueda espiar lo que no se exploró.
+   */
+  map?: string;
 }
 
 /**
@@ -38,6 +47,8 @@ export interface VisionMessage {
 export interface LobbyPlayer {
   x: number;
   y: number;
+  /** En qué piso está. Solo en la Vault; ver `floors.ts`. */
+  floor?: number;
   name: string;
   hue: number;
   /** Octante al que mira, 0 a 7. Lo decide el servidor al moverse. */
@@ -52,6 +63,128 @@ export interface LobbyPlayer {
   done?: boolean;
   /** Si puede actuar ahora. Solo en la Vault. */
   active?: boolean;
+  /** Cuánto vale lo que lleva encima. Solo en la Vault. */
+  loot?: number;
+  /** Vida que le queda. Solo en la Vault. */
+  hp?: number;
+  /** Vida con la que entró. Solo en la Vault. */
+  maxHp?: number;
+  /** Lo que lleva, como ids del catálogo. Solo en la Vault. */
+  items?: ArrayLike<string>;
+  /** Arma equipada. Solo en la Vault. */
+  weapon?: string;
+  /** Armadura equipada, o vacío. Solo en la Vault. */
+  armor?: string;
+}
+
+/**
+ * Un objeto del catálogo del servidor. Lo que existe lo decide el servidor;
+ * el cliente solo lo muestra.
+ */
+export interface CatalogItem {
+  id: string;
+  name: string;
+  kind: 'weapon' | 'armor' | 'consumable' | 'valuable' | 'ammo';
+  value: number;
+  tier: number;
+  /** Cuánto pesa, en kilos. */
+  weight: number;
+  /** Si no se puede guardar en el alijo: lo prestado. */
+  noStash?: boolean;
+  weapon?: {
+    damageMin: number;
+    damageMax: number;
+    ap: number;
+    range: number;
+    accuracy: number;
+    /** Qué munición gasta. Sin esto no gasta ninguna. */
+    ammo?: string;
+  };
+  reduction?: number;
+  heal?: number;
+}
+
+/** Mensaje con el catálogo de objetos. Llega al entrar y se puede pedir. */
+export const ITEMS_MESSAGE = 'items';
+
+/** Lo que trae ese mensaje: el catálogo y cuánto se puede cargar. */
+export interface ItemsMessage {
+  items: CatalogItem[];
+  /** Kilos que se pueden llevar encima. */
+  maxCarry: number;
+}
+
+/**
+ * Mensaje con el motivo de algo que el servidor no hizo, cuando no se ve a
+ * simple vista: sin munición, sin lugar en la mochila.
+ */
+export const NOTICE_MESSAGE = 'notice';
+
+export interface NoticeMessage {
+  text: string;
+}
+
+/** Queda avisado de los motivos que manda el servidor. */
+export function onNotice(room: LobbyRoom, handler: (message: NoticeMessage) => void): void {
+  room.onMessage<NoticeMessage>(NOTICE_MESSAGE, handler);
+}
+
+/** Mensaje con el resultado de un disparo, para el que tira y el que recibe. */
+export const SHOT_MESSAGE = 'shot';
+
+export interface ShotMessage {
+  from: string;
+  to: string;
+  fromName: string;
+  toName: string;
+  hit: boolean;
+  damage: number;
+  /** Con qué probabilidad se tiró, en por ciento. */
+  chance: number;
+  killed: boolean;
+}
+
+/** Mensaje para el que muere, justo antes de que la Vault lo saque. */
+export const DIED_MESSAGE = 'died';
+
+export interface DiedMessage {
+  /** El botín que perdió; quedó en el piso donde cayó. */
+  loot: number;
+  /** Quién lo mató. */
+  by: string;
+}
+
+/** Un contenedor. Lo que vale no se publica: se sabe al abrirlo. */
+export interface LootCache {
+  floor: number;
+  x: number;
+  y: number;
+  looted: boolean;
+}
+
+/**
+ * Una salida abierta. Pisarla saca de la instancia con el botín.
+ *
+ * El piso y cuándo cierra llegan siempre. La celda llega recién cuando se la
+ * ve: hasta entonces `x` e `y` vienen sin definir.
+ */
+export interface ExitPoint {
+  floor: number;
+  x?: number;
+  y?: number;
+  /** Primera ronda en la que ya no está. */
+  closes: number;
+}
+
+/** Mensaje con el que la Vault avisa que uno salió, y con cuánto. */
+export const EXTRACTED_MESSAGE = 'extracted';
+
+export interface ExtractedMessage {
+  loot: number;
+  /** Lo que se llevó, como ids del catálogo. */
+  items?: string[];
+  /** Si quedó guardado en el alijo. */
+  saved?: boolean;
 }
 
 /**
@@ -61,8 +194,23 @@ export interface LobbyPlayer {
 export interface LobbyState {
   width: number;
   height: number;
-  /** El mapa: una celda por carácter, fila por fila. `#` es pared. */
-  cells: string;
+  /**
+   * El mapa: una celda por carácter, fila por fila. `#` es pared, `>` baja
+   * al piso siguiente y `<` sube al anterior. La Vault no lo manda: cada uno
+   * recibe lo que exploró por el mensaje de visión, y `floorView` lo completa.
+   */
+  cells?: string;
+  /** Cuántos pisos tiene la mazmorra. Solo en la Vault. */
+  floorCount?: number;
+  /** Los contenedores de todos los pisos. Solo en la Vault. */
+  caches?: ArrayLike<LootCache>;
+  /** Las salidas abiertas en esta ronda. Solo en la Vault. */
+  exits?: ArrayLike<ExitPoint>;
+  /**
+   * Semilla con la que elegir los tiles. La manda el servidor en vez de los
+   * tiles mismos: no puede alojar assets del juego.
+   */
+  tileSeed?: number;
   /** Ronda en curso. Solo en la Vault; en el lobby llega sin definir. */
   round?: number;
   /** Cuánto queda del turno, en milisegundos. Solo en la Vault. */
@@ -94,13 +242,95 @@ export function defaultEndpoint(): string {
   return `${protocol}//${location.hostname}:2567`;
 }
 
+/** Lo que se manda al entrar, además del nombre. */
+export interface JoinExtras {
+  /** Token del jugador; ver `identity.ts`. */
+  token?: string;
+  /** Qué sacar del alijo para llevar. Solo lo lee la Vault. */
+  loadout?: string[];
+}
+
 export async function connectToLobby(
   name: string,
   room: string = LOBBY_ROOM,
+  extras: JoinExtras = {},
   endpoint = defaultEndpoint(),
 ): Promise<LobbyRoom> {
   const client = new Client(endpoint);
-  return client.joinOrCreate<LobbyState>(room, { name });
+  return client.joinOrCreate<LobbyState>(room, { name, ...extras });
+}
+
+/** Mensaje con el alijo propio. Lo manda el lobby al entrar y a pedido. */
+export const STASH_MESSAGE = 'stash';
+
+export interface StashMessage {
+  /** Cuántos de cada objeto hay guardados. */
+  contents: Record<string, number>;
+  /** Cuántos créditos tiene. */
+  credits?: number;
+  /** El nombre de su cuenta, o `null` si el alijo vive solo en este navegador. */
+  account?: string | null;
+}
+
+/** Mensaje con lo que vende el mercader. Lo manda el lobby al entrar. */
+export const SHOP_MESSAGE = 'shop';
+
+export function onShop(room: LobbyRoom, handler: (message: ShopMessage) => void): void {
+  room.onMessage<ShopMessage>(SHOP_MESSAGE, handler);
+}
+
+export function requestShop(room: LobbyRoom): void {
+  room.send(SHOP_MESSAGE);
+}
+
+/** Le vende al mercader, `{ id: cuántos }`. */
+export function sendSell(room: LobbyRoom, items: Record<string, number>): void {
+  room.send('sell', { items });
+}
+
+/** Le compra al mercader una unidad de lo que vende. */
+export function sendBuy(room: LobbyRoom, item: string): void {
+  room.send('buy', { item });
+}
+
+/** Mensaje con una oferta de intercambio que le hicieron. */
+export const TRADE_MESSAGE = 'trade';
+/** Mensaje que avisa que una oferta se cerró, y cómo. */
+export const TRADE_CLOSED_MESSAGE = 'tradeClosed';
+
+export function onTrade(room: LobbyRoom, handler: (offer: TradeOffer) => void): void {
+  room.onMessage<TradeOffer>(TRADE_MESSAGE, handler);
+}
+
+export function onTradeClosed(room: LobbyRoom, handler: (closed: { id: number; text: string }) => void): void {
+  room.onMessage<{ id: number; text: string }>(TRADE_CLOSED_MESSAGE, handler);
+}
+
+export function sendTradeOffer(room: LobbyRoom, request: TradeRequest): void {
+  room.send('tradeOffer', request);
+}
+
+export function sendTradeAnswer(room: LobbyRoom, id: number, accept: boolean): void {
+  room.send('tradeAnswer', { id, accept });
+}
+
+/** Crea una cuenta con el alijo de este navegador, o entra a una. */
+export function sendAccount(room: LobbyRoom, action: 'register' | 'login', name: string, password: string): void {
+  room.send(action, { name, password });
+}
+
+export function sendLogout(room: LobbyRoom): void {
+  room.send('logout');
+}
+
+/** Queda avisado cuando llega el alijo. */
+export function onStash(room: LobbyRoom, handler: (message: StashMessage) => void): void {
+  room.onMessage<StashMessage>(STASH_MESSAGE, handler);
+}
+
+/** Pide el alijo, por si el que se mandó al entrar llegó antes del handler. */
+export function requestStash(room: LobbyRoom): void {
+  room.send(STASH_MESSAGE);
 }
 
 /** Cierra el turno propio. Solo lo escucha la Vault. */
@@ -110,6 +340,83 @@ export function sendEndTurn(room: LobbyRoom): void {
 
 export function sendStep(room: LobbyRoom, step: Step): void {
   room.send('move', step);
+}
+
+/**
+ * Camina hasta una celda: el servidor arma el camino y lo da de a un paso,
+ * abriendo las puertas que cruce. Con `then` se frena al lado y abre lo que
+ * hay ahí: el contenedor (`loot`) o la puerta (`open`).
+ */
+export function sendMoveTo(room: LobbyRoom, x: number, y: number, then?: 'loot' | 'open'): void {
+  room.send('moveTo', then ? { x, y, then } : { x, y });
+}
+
+/** Dispara a otro jugador. Solo lo escucha la Vault. */
+export function sendAttack(room: LobbyRoom, target: string): void {
+  room.send('attack', { target });
+}
+
+/** Queda avisado de los disparos en los que uno tira o recibe. */
+export function onShot(room: LobbyRoom, handler: (message: ShotMessage) => void): void {
+  room.onMessage<ShotMessage>(SHOT_MESSAGE, handler);
+}
+
+/** Queda avisado si lo matan. */
+export function onDied(room: LobbyRoom, handler: (message: DiedMessage) => void): void {
+  room.onMessage<DiedMessage>(DIED_MESSAGE, handler);
+}
+
+/**
+ * Cómo contarle un disparo a quien estuvo en él. Desde el lado del que tira
+ * o del que recibe, porque "le diste" y "te dio" no son lo mismo.
+ */
+export function describeShot(shot: ShotMessage, ownSessionId: string): string {
+  const prob = `(${shot.chance} %)`;
+  if (shot.from === ownSessionId) {
+    if (!shot.hit) return `Fallaste el disparo a ${shot.toName} ${prob}.`;
+    const final = shot.killed ? ` Cayó ${shot.toName}.` : '';
+    return `Le diste a ${shot.toName}: ${shot.damage} de daño ${prob}.${final}`;
+  }
+  if (!shot.hit) return `${shot.fromName} te disparó y falló.`;
+  return `${shot.fromName} te dio: ${shot.damage} de daño.`;
+}
+
+/** Equipa un arma o una armadura, o se saca la armadura puesta. */
+export function sendEquip(room: LobbyRoom, item: string): void {
+  room.send('equip', { item });
+}
+
+/** Usa un consumible. */
+export function sendUse(room: LobbyRoom, item: string): void {
+  room.send('use', { item });
+}
+
+/** Suelta un objeto en la celda propia; la munición, toda la de ese tipo. */
+export function sendDrop(room: LobbyRoom, item: string): void {
+  room.send('drop', { item });
+}
+
+/** Queda avisado cuando llega el catálogo de objetos. */
+export function onItems(room: LobbyRoom, handler: (message: ItemsMessage) => void): void {
+  room.onMessage<ItemsMessage>(ITEMS_MESSAGE, handler);
+}
+
+/** Pide el catálogo, por si el que se mandó al entrar llegó antes del handler. */
+export function requestItems(room: LobbyRoom): void {
+  room.send(ITEMS_MESSAGE);
+}
+
+/** Abre el contenedor que haya al alcance. Solo lo escucha la Vault. */
+export function sendLoot(room: LobbyRoom): void {
+  room.send('loot');
+}
+
+/** Tecla para saquear. La F queda a mano de las de movimiento. */
+export const isLootKey = (key: string): boolean => key.toLowerCase() === 'f';
+
+/** Queda avisado si la Vault lo saca de la instancia por una salida. */
+export function onExtracted(room: LobbyRoom, handler: (message: ExtractedMessage) => void): void {
+  room.onMessage<ExtractedMessage>(EXTRACTED_MESSAGE, handler);
 }
 
 /** Queda avisado cada vez que cambia lo que el jugador ve. */

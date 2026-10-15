@@ -24,6 +24,7 @@ function contextoFalso() {
     lineWidth: 0,
     font: '',
     textAlign: '',
+    textBaseline: '',
     setTransform: () => {},
     translate: () => {},
     fillRect: () => {},
@@ -65,7 +66,7 @@ function vista(visibles: number[], exploradas: number[]): VisionView {
 describe('renderLobby con niebla', () => {
   it('sin visión dibuja todo y a todos', () => {
     const { canvas, imagenes, textos } = contextoFalso();
-    renderLobby(canvas, estado(), { ownSessionId: 'yo', floor: TILE });
+    renderLobby(canvas, estado(), { ownSessionId: 'yo', floors: [TILE] });
 
     expect(imagenes).toHaveLength(3);
     expect(imagenes.every((i) => i.alpha === 1)).toBe(true);
@@ -74,7 +75,7 @@ describe('renderLobby con niebla', () => {
 
   it('no dibuja lo que nunca se vio', () => {
     const { canvas, imagenes } = contextoFalso();
-    renderLobby(canvas, estado(), { ownSessionId: 'yo', floor: TILE, vision: vista([0], [1]) });
+    renderLobby(canvas, estado(), { ownSessionId: 'yo', floors: [TILE], vision: vista([0], [1]) });
 
     // La celda 2 no se vio nunca: ni piso ni contorno.
     expect(imagenes).toHaveLength(2);
@@ -82,7 +83,7 @@ describe('renderLobby con niebla', () => {
 
   it('apaga lo explorado que ya no se ve', () => {
     const { canvas, imagenes } = contextoFalso();
-    renderLobby(canvas, estado(), { ownSessionId: 'yo', floor: TILE, vision: vista([0], [1]) });
+    renderLobby(canvas, estado(), { ownSessionId: 'yo', floors: [TILE], vision: vista([0], [1]) });
 
     expect(imagenes[0].alpha, 'la celda visible').toBe(1);
     expect(imagenes[1].alpha, 'la recordada').toBeLessThan(1);
@@ -91,7 +92,7 @@ describe('renderLobby con niebla', () => {
 
   it('no muestra a quien está en una celda que no se ve', () => {
     const { canvas, textos } = contextoFalso();
-    renderLobby(canvas, estado(), { ownSessionId: 'yo', floor: TILE, vision: vista([0], [1, 2]) });
+    renderLobby(canvas, estado(), { ownSessionId: 'yo', floors: [TILE], vision: vista([0], [1, 2]) });
 
     // La celda del otro está explorada, así que el piso se dibuja; él no.
     expect(textos).toContain('Yo');
@@ -100,8 +101,62 @@ describe('renderLobby con niebla', () => {
 
   it('muestra a quien sí se ve', () => {
     const { canvas, textos } = contextoFalso();
-    renderLobby(canvas, estado(), { ownSessionId: 'yo', floor: TILE, vision: vista([0, 2], []) });
+    renderLobby(canvas, estado(), { ownSessionId: 'yo', floors: [TILE], vision: vista([0, 2], []) });
 
     expect(textos).toEqual(expect.arrayContaining(['Yo', 'Otro']));
+  });
+});
+
+describe('renderLobby con escaleras', () => {
+  it('marca hacia dónde lleva cada escalera', () => {
+    const { canvas, textos } = contextoFalso();
+    const conEscaleras: LobbyState = { ...estado(), cells: '>.<' };
+    renderLobby(canvas, conEscaleras, { ownSessionId: 'yo', floors: [TILE] });
+
+    expect(textos).toEqual(expect.arrayContaining(['▼', '▲']));
+  });
+
+  it('una escalera nunca vista no se delata', () => {
+    const { canvas, textos } = contextoFalso();
+    const conEscaleras: LobbyState = { ...estado(), cells: '..>' };
+    renderLobby(canvas, conEscaleras, { ownSessionId: 'yo', floors: [TILE], vision: vista([0], []) });
+
+    expect(textos).not.toContain('▼');
+  });
+});
+
+describe('renderLobby con botín y salidas', () => {
+  it('distingue un contenedor lleno de uno vaciado', () => {
+    const { canvas, textos } = contextoFalso();
+    const con: LobbyState = {
+      ...estado(),
+      caches: [
+        { floor: 0, x: 0, y: 0, looted: false },
+        { floor: 0, x: 1, y: 0, looted: true },
+      ],
+    };
+    renderLobby(canvas, con, { ownSessionId: 'yo', floors: [TILE] });
+    expect(textos).toEqual(expect.arrayContaining(['■', '□']));
+  });
+
+  it('una salida se ve solo mientras se la está viendo', () => {
+    const con: LobbyState = { ...estado(), exits: [{ floor: 0, x: 1, y: 0, closes: 5 }] };
+
+    const vista1 = contextoFalso();
+    renderLobby(vista1.canvas, con, { ownSessionId: 'yo', floors: [TILE], vision: vista([0, 1], []) });
+    expect(vista1.textos).toContain('SALIDA');
+
+    const vista2 = contextoFalso();
+    renderLobby(vista2.canvas, con, { ownSessionId: 'yo', floors: [TILE], vision: vista([0], [1]) });
+    expect(vista2.textos, 'explorada pero no a la vista').not.toContain('SALIDA');
+  });
+});
+
+describe('renderLobby con vida', () => {
+  it('devuelve el origen de la grilla para ubicar los clicks', () => {
+    const { canvas } = contextoFalso();
+    const origen = renderLobby(canvas, estado(), { ownSessionId: 'yo', floors: [TILE] });
+    expect(origen).not.toBeNull();
+    expect(Number.isFinite(origen!.minX) && Number.isFinite(origen!.minY)).toBe(true);
   });
 });

@@ -1,0 +1,192 @@
+/**
+ * Catálogo de objetos.
+ *
+ * Es del servidor y no sale de los archivos del juego. Los objetos del juego
+ * original están definidos en sus `.BOS`, que el servidor no puede alojar
+ * (punto 1), y leerlos del cliente le daría al cliente la última palabra
+ * sobre qué existe, cuando el punto 2 dice que la autoridad es del servidor.
+ * Así que el servidor tiene su propio catálogo, con nombres genéricos y los
+ * números que usan las reglas. El cliente lo recibe al entrar y, más
+ * adelante, podrá dibujar cada objeto con un sprite de la instalación del
+ * jugador; el catálogo dice qué es, no cómo se ve.
+ *
+ * Los nombres evitan marcas, como pide el punto 1.
+ */
+
+/** Nivel tecnológico. El punto 3 reserva lo más alto para las Vaults. */
+export type Tier = 0 | 1 | 2 | 3;
+
+export interface WeaponStats {
+  /** Rango del daño de un impacto. */
+  damageMin: number;
+  damageMax: number;
+  /** Puntos de acción por disparo. */
+  ap: number;
+  /** Alcance en celdas. Nunca más que la vista. */
+  range: number;
+  /** Puntos de probabilidad que suma o resta al disparo. */
+  accuracy: number;
+  /**
+   * Qué munición gasta, una por disparo, como id del catálogo. Sin esto no
+   * gasta nada: es solo la de emergencia, que tiene que servir siempre.
+   */
+  ammo?: string;
+}
+
+export interface ItemBase {
+  id: string;
+  name: string;
+  /** Lo que vale. La suma de lo que se lleva es el botín. */
+  value: number;
+  tier: Tier;
+  /** Cuánto pesa, en kilos. Lo que se lleva no puede pasar de `CARGA_MAXIMA`. */
+  weight: number;
+  /**
+   * Si no se puede guardar en el alijo. Es lo que se presta para poder
+   * jugar: si se pudiera guardar, entrar y salir lo iría acumulando gratis.
+   */
+  noStash?: true;
+}
+
+export type Item =
+  | (ItemBase & { kind: 'weapon'; weapon: WeaponStats })
+  | (ItemBase & { kind: 'armor'; /** Cuánto daño quita de cada impacto. */ reduction: number })
+  | (ItemBase & { kind: 'consumable'; /** Vida que devuelve al usarlo. */ heal: number })
+  | (ItemBase & { kind: 'valuable' })
+  | (ItemBase & {
+      kind: 'ammo';
+      /** Cuántas salen juntas en un hallazgo, como mucho. Cada una es un objeto. */
+      stack: number;
+    });
+
+export const ITEMS: readonly Item[] = [
+  // Armas. La de emergencia es la que se presta a quien entra sin arma: peor
+  // que cualquier otra, no vale nada, no gasta munición y no se puede guardar.
+  { id: 'pistola-emergencia', name: 'Pistola de emergencia', kind: 'weapon', tier: 0, value: 0, weight: 1, noStash: true,
+    weapon: { damageMin: 4, damageMax: 8, ap: 3, range: 8, accuracy: -5 } },
+  { id: 'pistola', name: 'Pistola 9 mm', kind: 'weapon', tier: 0, value: 5, weight: 1,
+    weapon: { damageMin: 6, damageMax: 12, ap: 3, range: 12, accuracy: 0, ammo: 'balas-9mm' } },
+  { id: 'subfusil', name: 'Subfusil', kind: 'weapon', tier: 1, value: 15, weight: 3,
+    weapon: { damageMin: 5, damageMax: 10, ap: 2, range: 9, accuracy: -5, ammo: 'balas-9mm' } },
+  { id: 'escopeta', name: 'Escopeta', kind: 'weapon', tier: 1, value: 18, weight: 4,
+    weapon: { damageMin: 10, damageMax: 18, ap: 4, range: 5, accuracy: 10, ammo: 'cartuchos' } },
+  { id: 'rifle-caza', name: 'Rifle de caza', kind: 'weapon', tier: 2, value: 30, weight: 4,
+    weapon: { damageMin: 10, damageMax: 16, ap: 4, range: 12, accuracy: 15, ammo: 'balas-rifle' } },
+  { id: 'rifle-asalto', name: 'Rifle de asalto', kind: 'weapon', tier: 2, value: 35, weight: 4,
+    weapon: { damageMin: 8, damageMax: 14, ap: 3, range: 11, accuracy: 0, ammo: 'balas-rifle' } },
+  { id: 'rifle-laser', name: 'Rifle láser', kind: 'weapon', tier: 3, value: 60, weight: 5,
+    weapon: { damageMin: 14, damageMax: 22, ap: 4, range: 12, accuracy: 10, ammo: 'celdas' } },
+
+  // Munición. Cada bala es un objeto: así se guarda, se saquea y se pierde
+  // como cualquier otra cosa, sin un sistema aparte.
+  { id: 'balas-9mm', name: 'Balas 9 mm', kind: 'ammo', tier: 1, value: 1, weight: 0.02, stack: 12 },
+  { id: 'cartuchos', name: 'Cartuchos', kind: 'ammo', tier: 1, value: 1, weight: 0.05, stack: 8 },
+  { id: 'balas-rifle', name: 'Balas de rifle', kind: 'ammo', tier: 2, value: 2, weight: 0.03, stack: 10 },
+  { id: 'celdas', name: 'Celdas de energía', kind: 'ammo', tier: 3, value: 3, weight: 0.05, stack: 10 },
+
+  { id: 'cuero', name: 'Armadura de cuero', kind: 'armor', tier: 1, value: 12, weight: 6, reduction: 2 },
+  { id: 'metal', name: 'Armadura de metal', kind: 'armor', tier: 2, value: 28, weight: 12, reduction: 4 },
+  { id: 'combate', name: 'Armadura de combate', kind: 'armor', tier: 3, value: 50, weight: 9, reduction: 6 },
+
+  { id: 'estimulante', name: 'Estimulante', kind: 'consumable', tier: 1, value: 8, weight: 0.2, heal: 10 },
+  { id: 'superestimulante', name: 'Superestimulante', kind: 'consumable', tier: 3, value: 25, weight: 0.3, heal: 25 },
+
+  { id: 'chatarra', name: 'Chatarra', kind: 'valuable', tier: 1, value: 3, weight: 2 },
+  { id: 'componentes', name: 'Componentes', kind: 'valuable', tier: 2, value: 15, weight: 1 },
+  { id: 'holodisco', name: 'Holodisco', kind: 'valuable', tier: 3, value: 40, weight: 0.1 },
+];
+
+const POR_ID = new Map(ITEMS.map((item) => [item.id, item]));
+
+export function itemById(id: string): Item | undefined {
+  return POR_ID.get(id);
+}
+
+/**
+ * El arma que se presta a quien entra sin una propia. Sin arma no hay forma
+ * de jugar, pero si se pudiera guardar, entrar y extraer una y otra vez
+ * llenaría el alijo de armas gratis: por eso es `noStash`.
+ */
+export const STARTING_WEAPON = 'pistola-emergencia';
+
+/** Si un objeto existe y se puede guardar en el alijo. */
+export function isStashable(id: string): boolean {
+  const item = itemById(id);
+  return item !== undefined && !item.noStash;
+}
+
+/** Las estadísticas de un arma, o las de la inicial si el id no es un arma. */
+export function weaponStats(id: string): WeaponStats {
+  const item = itemById(id);
+  if (item?.kind === 'weapon') return item.weapon;
+  const inicial = itemById(STARTING_WEAPON);
+  if (inicial?.kind !== 'weapon') throw new Error('Falta el arma inicial en el catálogo');
+  return inicial.weapon;
+}
+
+/** Cuánto daño quita una armadura. Sin armadura, o con un id que no lo es, nada. */
+export function armorReduction(id: string): number {
+  const item = itemById(id);
+  return item?.kind === 'armor' ? item.reduction : 0;
+}
+
+/**
+ * Cuánto se puede cargar, en kilos. Alcanza para un arma, una armadura
+ * pesada y algo de botín: con más, saquear dejaría de ser una decisión.
+ */
+export const CARGA_MAXIMA = 25;
+
+/**
+ * Lo que pesa una lista de objetos, en kilos. Se redondea a gramos: sumar
+ * pesos con decimales deja restos que harían fallar una comparación justa.
+ */
+export function weightOf(ids: Iterable<string>): number {
+  let total = 0;
+  for (const id of ids) total += itemById(id)?.weight ?? 0;
+  return Math.round(total * 1000) / 1000;
+}
+
+/** Si a lo que se lleva se le pueden sumar esos objetos sin pasarse de peso. */
+export function fits(carried: Iterable<string>, more: Iterable<string>): boolean {
+  return weightOf([...carried, ...more]) <= CARGA_MAXIMA;
+}
+
+/**
+ * Lo que se le manda al cliente para que sepa qué existe: el catálogo y el
+ * tope de carga, que es la otra regla que necesita para armar el equipo.
+ */
+export interface ItemsMessage {
+  items: readonly Item[];
+  /** Cuántos kilos se pueden llevar. */
+  maxCarry: number;
+}
+
+export const ITEMS_PAYLOAD: ItemsMessage = { items: ITEMS, maxCarry: CARGA_MAXIMA };
+
+/** Lo que vale una lista de objetos. Lo que no está en el catálogo no vale nada. */
+export function valueOf(ids: Iterable<string>): number {
+  let total = 0;
+  for (const id of ids) total += itemById(id)?.value ?? 0;
+  return total;
+}
+
+/**
+ * Qué nivel sale en un piso, a partir de una tirada de 0 a 1.
+ *
+ * El primer piso da casi todo nivel 1 (90 %). Cada piso corre la
+ * distribución medio escalón: en el segundo domina el 2 y asoma el 3, y en
+ * el tercero el 3 ya es mayoría. Así lo de abajo vale bastante más que lo de
+ * arriba, que es lo que hace que bajar valga la pena.
+ */
+export function tierForFloor(floor: number, tirada: number): Exclude<Tier, 0> {
+  const subida = tirada + floor * 0.5;
+  if (subida < 0.9) return 1;
+  if (subida < 1.4) return 2;
+  return 3;
+}
+
+/** Un objeto al azar de un nivel. */
+export function randomItemOfTier(tier: Tier, tirada: number): Item {
+  const candidatos = ITEMS.filter((item) => item.tier === tier);
+  return candidatos[Math.min(candidatos.length - 1, Math.floor(tirada * candidatos.length))];
+}

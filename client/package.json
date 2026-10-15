@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "assets-de-prueba": "node scripts/assets-de-prueba.mjs"
+    "assets-de-prueba": "node scripts/assets-de-prueba.ts"
   },
   "dependencies": {
     "@colyseus/sdk": "^0.18.4",

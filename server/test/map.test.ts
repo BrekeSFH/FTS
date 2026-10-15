@@ -1,11 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { FLOOR, WALL, floorCells, generateMap, isBlocked, type GameMap } from '../src/rooms/map';
+import {
+  FLOOR,
+  STAIRS_DOWN,
+  STAIRS_UP,
+  WALL,
+  DOOR_CLOSED,
+  DOOR_OPEN,
+  floorCells,
+  generateBuilding,
+  generateDungeon,
+  generateMap,
+  isBlocked,
+  type GameMap,
+} from '../src/rooms/map';
 
 const filas = (map: GameMap) =>
   Array.from({ length: map.height }, (_, y) => map.cells.slice(y * map.width, (y + 1) * map.width));
 
-/** Cuántas celdas transitables se alcanzan caminando desde la primera. */
-function alcanzables(map: GameMap): number {
+/**
+ * Cuántas celdas transitables se alcanzan caminando desde la primera. Con
+ * `puertas`, las puertas cerradas se cuentan como abiertas: es lo que importa
+ * en la Vault, donde toda puerta se puede abrir.
+ */
+function alcanzables(map: GameMap, puertas = false): number {
+  if (puertas) map = { ...map, cells: map.cells.replaceAll(DOOR_CLOSED, DOOR_OPEN) };
   const libres = floorCells(map);
   if (libres.length === 0) return 0;
   const vistas = new Set<string>();
@@ -114,5 +132,106 @@ describe('floorCells', () => {
     const libres = floorCells(map);
     expect(libres).toHaveLength(filas(map).join('').split('').filter((c) => c === FLOOR).length);
     for (const { x, y } of libres) expect(isBlocked(map, x, y)).toBe(false);
+  });
+});
+
+describe('generateDungeon', () => {
+  const celda = (map: GameMap, c: { x: number; y: number }) => map.cells[c.y * map.width + c.x];
+
+  it('pone una escalera de bajada en cada piso salvo el último, y de subida salvo el primero', () => {
+    const pisos = generateDungeon(40, 30, 7, 3);
+    expect(pisos).toHaveLength(3);
+    expect(pisos[0].up).toBeNull();
+    expect(pisos[2].down).toBeNull();
+    for (const [n, piso] of pisos.entries()) {
+      const cuenta = (c: string) => [...piso.cells].filter((x) => x === c).length;
+      expect(cuenta(STAIRS_DOWN), `bajadas del piso ${n}`).toBe(n < 2 ? 1 : 0);
+      expect(cuenta(STAIRS_UP), `subidas del piso ${n}`).toBe(n > 0 ? 1 : 0);
+      if (piso.down) expect(celda(piso, piso.down)).toBe(STAIRS_DOWN);
+      if (piso.up) expect(celda(piso, piso.up)).toBe(STAIRS_UP);
+    }
+  });
+
+  it('las escaleras se caminan y todo el piso sigue conectado', () => {
+    for (const seed of [1, 7, 42, 1000]) {
+      for (const piso of generateDungeon(40, 30, seed, 3)) {
+        for (const c of [piso.up, piso.down]) if (c) expect(isBlocked(piso, c.x, c.y)).toBe(false);
+        const abiertas = { ...piso, cells: piso.cells.replaceAll(DOOR_CLOSED, DOOR_OPEN) };
+        expect(alcanzables(piso, true), `semilla ${seed}`).toBe(floorCells(abiertas).length);
+      }
+    }
+  });
+
+  it('cada piso es distinto', () => {
+    const pisos = generateDungeon(40, 30, 7, 3);
+    expect(new Set(pisos.map((p) => p.cells)).size).toBe(3);
+  });
+
+  it('con la misma semilla sale la misma mazmorra', () => {
+    expect(generateDungeon(40, 30, 99, 3)).toEqual(generateDungeon(40, 30, 99, 3));
+  });
+
+  it('con una sola sala las dos escaleras no caen en la misma celda', () => {
+    const pisos = generateDungeon(20, 20, 3, 3, { rooms: 1 });
+    expect(pisos[1].up).not.toEqual(pisos[1].down);
+  });
+
+  it('rechaza una mazmorra sin pisos', () => {
+    expect(() => generateDungeon(40, 30, 1, 0)).toThrow();
+  });
+});
+
+describe('generateBuilding', () => {
+  const celda = (map: GameMap, x: number, y: number) => map.cells[y * map.width + x];
+
+  it('salas pegadas, sin roca de más: casi todo el piso es transitable', () => {
+    const map = generateBuilding(40, 30, 7);
+    const libres = [...map.cells].filter((c) => c !== WALL).length;
+    expect(libres / map.cells.length).toBeGreaterThan(0.6);
+    expect(map.rooms.length).toBeGreaterThan(4);
+  });
+
+  it('cada puerta está en una pared entre dos salas', () => {
+    for (const seed of [1, 7, 42]) {
+      const map = generateBuilding(40, 30, seed);
+      for (let y = 0; y < map.height; y++) {
+        for (let x = 0; x < map.width; x++) {
+          if (celda(map, x, y) !== DOOR_CLOSED) continue;
+          const horizontal = celda(map, x - 1, y) === FLOOR && celda(map, x + 1, y) === FLOOR;
+          const vertical = celda(map, x, y - 1) === FLOOR && celda(map, x, y + 1) === FLOOR;
+          expect(horizontal || vertical, `puerta en ${x},${y}`).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('con las puertas cerradas cada sala está aislada, y abiertas se llega a todas', () => {
+    const map = generateBuilding(40, 30, 7);
+    expect(alcanzables(map)).toBeLessThan(floorCells(map).length);
+    const abiertas = { ...map, cells: map.cells.replaceAll(DOOR_CLOSED, DOOR_OPEN) };
+    expect(alcanzables(map, true)).toBe(floorCells(abiertas).length);
+  });
+
+  it('las salas no se pisan y quedan dentro del mapa', () => {
+    const map = generateBuilding(40, 30, 7);
+    const vistas = new Set<string>();
+    for (const r of map.rooms) {
+      expect(r.x).toBeGreaterThan(0);
+      expect(r.y).toBeGreaterThan(0);
+      expect(r.x + r.width).toBeLessThan(map.width);
+      expect(r.y + r.height).toBeLessThan(map.height);
+      for (let y = r.y; y < r.y + r.height; y++) {
+        for (let x = r.x; x < r.x + r.width; x++) {
+          expect(vistas.has(`${x},${y}`)).toBe(false);
+          vistas.add(`${x},${y}`);
+          expect(celda(map, x, y)).toBe(FLOOR);
+        }
+      }
+    }
+  });
+
+  it('con la misma semilla, el mismo edificio', () => {
+    expect(generateBuilding(40, 30, 99)).toEqual(generateBuilding(40, 30, 99));
+    expect(generateBuilding(40, 30, 99).cells).not.toBe(generateBuilding(40, 30, 98).cells);
   });
 });

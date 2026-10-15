@@ -75,3 +75,47 @@ describe('turnHud', () => {
     });
   });
 });
+
+describe('turnHud con varios pisos', () => {
+  it('dice en qué piso se está', () => {
+    const hud = turnHud(
+      sala({ round: 1, floorCount: 3 }),
+      jugador({ party: 'Yermo', floor: 1, ap: 6, active: true }),
+    );
+    expect(hud.text).toContain('piso 2 de 3');
+  });
+
+  it('con un piso solo no lo menciona', () => {
+    const hud = turnHud(sala({ round: 1, floorCount: 1 }), jugador({ active: true, ap: 6 }));
+    expect(hud.text).not.toContain('piso');
+  });
+});
+
+describe('turnHud con botín y salidas', () => {
+  it('dice cuánto se lleva encima', () => {
+    const hud = turnHud(sala({ round: 1 }), jugador({ loot: 42, active: true, ap: 6 }));
+    expect(hud.text).toContain('botín 42');
+  });
+
+  it('avisa la salida abierta, en qué piso y cuánto le queda', () => {
+    const exits = [{ floor: 2, closes: 6 }];
+    // Sin la celda: es lo que llega de una salida que no se vio todavía.
+    const hud = turnHud(sala({ round: 4, floorCount: 3, exits }), jugador({ active: true, ap: 6 }));
+    expect(hud.text).toContain('salida abierta en el piso 3 (2 rondas)');
+
+    const ultima = turnHud(sala({ round: 5, floorCount: 3, exits }), jugador({ active: true, ap: 6 }));
+    expect(ultima.text).toContain('(última ronda)');
+  });
+
+  it('sin salida no la menciona', () => {
+    const hud = turnHud(sala({ round: 1, exits: [] }), jugador({ active: true, ap: 6 }));
+    expect(hud.text).not.toContain('salida');
+  });
+});
+
+describe('turnHud con vida', () => {
+  it('dice cuánta vida queda', () => {
+    const hud = turnHud(sala({ round: 1 }), jugador({ hp: 18, maxHp: 30, active: true, ap: 6 }));
+    expect(hud.text).toContain('vida 18/30');
+  });
+});
