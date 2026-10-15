@@ -2,9 +2,10 @@
  * Quién es el jugador, para el servidor.
  *
  * La primera vez se genera un token al azar y se guarda en el navegador; de
- * ahí en más se manda el mismo, y el servidor reconoce el alijo. No hay
- * cuenta ni contraseña: el token es la llave, y perderlo —borrar los datos
- * del sitio, cambiar de navegador— es perder el alijo. Para empezar alcanza.
+ * ahí en más se manda el mismo, y el servidor reconoce el alijo. Sin cuenta,
+ * el token es la llave, y perderlo —borrar los datos del sitio, cambiar de
+ * navegador— es perder el alijo. Con una cuenta, el servidor ata este token
+ * a ella, y desde otro navegador se entra con nombre y clave.
  */
 
 const CLAVE = 'fts.token';

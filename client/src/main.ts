@@ -611,6 +611,7 @@ const lobby = setupLobby({
   inventory: $('lobby-inventory'),
   load: $('lobby-load'),
   stash: $('lobby-stash'),
+  market: $('lobby-market'),
   onTileSeed: (seed) => {
     semillaSala = seed;
     void armarTablero(seed);

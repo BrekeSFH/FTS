@@ -10,7 +10,7 @@
  * decide. Acá además decide si siquiera le toca.
  */
 import { Client, Room } from '@colyseus/core';
-import { currentStash, playerIdFromToken } from '../stash';
+import { currentStash, playerFor, playerIdFromToken } from '../stash';
 import { ALERTA_RADIO, ENEMY_PARTY, coverStep, esEnemigo, nextStep, placeEnemies } from './ai';
 import { HP_MAX, canShoot, hitChance, resolveShot } from './combat';
 import {
@@ -291,7 +291,11 @@ export class VaultRoom extends Room<VaultRoomOptions> {
    */
   private rastro = new Map<string, Cell>();
 
-  /** De qué jugador es cada sesión, para devolverle lo que extraiga. */
+  /**
+   * El hash del token de cada sesión, para devolverle lo que extraiga. Se
+   * guarda el token y no el jugador: si mientras tanto entró a su cuenta
+   * desde el lobby, lo extraído tiene que ir a la cuenta.
+   */
   private duenos = new Map<string, string>();
 
   /**
@@ -425,7 +429,7 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     // El equipo sale del alijo al entrar, y desde ese momento está en juego:
     // si muere o se va, no vuelve. Se saca después de tener lugar, para no
     // quitarle nada a quien después no puede entrar.
-    const player = playerIdFromToken(options.token);
+    const player = playerFor(options.token);
     const loadout = sanitizeLoadout(options.loadout);
     // Se mide antes de tocar el alijo, con la pistola prestada incluida, que
     // también pesa: entrar con más de lo que se puede cargar no tiene arreglo.
@@ -437,7 +441,8 @@ export class VaultRoom extends Room<VaultRoomOptions> {
       if (!player || !stash) throw new Error('Para entrar con equipo hace falta un alijo');
       if (!stash.take(player, loadout)) throw new Error('No tenés todo eso en el alijo');
     }
-    if (player) this.duenos.set(client.sessionId, player);
+    const token = playerIdFromToken(options.token);
+    if (token) this.duenos.set(client.sessionId, token);
     // Sin un arma propia se entra con la pistola de emergencia: sin arma no
     // hay forma de jugar.
     const arma = loadout.find((id) => itemById(id)?.kind === 'weapon');
@@ -966,8 +971,9 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     this.state.players.delete(sessionId);
     if (this.turns) this.turns = leave(this.turns, sessionId, Date.now());
     // Lo que se llevó vuelve al alijo: es lo que hace que extraer valga.
-    const player = this.duenos.get(sessionId);
+    const token = this.duenos.get(sessionId);
     const stash = currentStash();
+    const player = token && stash ? stash.resolve(token) : null;
     if (player && stash) stash.add(player, items);
     this.duenos.delete(sessionId);
     return { loot, items, saved: Boolean(player && stash) };

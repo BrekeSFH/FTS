@@ -53,7 +53,7 @@ describe('el alijo en el lobby', () => {
     client.onMessage(STASH_MESSAGE, (m: StashMessage) => (visto = m));
     client.send(STASH_MESSAGE);
     for (let i = 0; i < 20 && visto === null; i++) await room.waitForNextPatch();
-    expect(visto).toEqual({ contents: { chatarra: 2 } });
+    expect(visto).toEqual({ contents: { chatarra: 2 }, credits: 0, account: null });
   });
 });
 

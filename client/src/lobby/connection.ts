@@ -6,6 +6,7 @@
  * estado sincronizado, nunca de una predicción local.
  */
 import { Client, type Room } from '@colyseus/sdk';
+import type { ShopMessage, TradeOffer, TradeRequest } from './market';
 
 export const LOBBY_ROOM = 'lobby';
 /** La sala de combate por turnos; ver `VaultRoom` del servidor. */
@@ -265,6 +266,61 @@ export const STASH_MESSAGE = 'stash';
 export interface StashMessage {
   /** Cuántos de cada objeto hay guardados. */
   contents: Record<string, number>;
+  /** Cuántos créditos tiene. */
+  credits?: number;
+  /** El nombre de su cuenta, o `null` si el alijo vive solo en este navegador. */
+  account?: string | null;
+}
+
+/** Mensaje con lo que vende el mercader. Lo manda el lobby al entrar. */
+export const SHOP_MESSAGE = 'shop';
+
+export function onShop(room: LobbyRoom, handler: (message: ShopMessage) => void): void {
+  room.onMessage<ShopMessage>(SHOP_MESSAGE, handler);
+}
+
+export function requestShop(room: LobbyRoom): void {
+  room.send(SHOP_MESSAGE);
+}
+
+/** Le vende al mercader, `{ id: cuántos }`. */
+export function sendSell(room: LobbyRoom, items: Record<string, number>): void {
+  room.send('sell', { items });
+}
+
+/** Le compra al mercader una unidad de lo que vende. */
+export function sendBuy(room: LobbyRoom, item: string): void {
+  room.send('buy', { item });
+}
+
+/** Mensaje con una oferta de intercambio que le hicieron. */
+export const TRADE_MESSAGE = 'trade';
+/** Mensaje que avisa que una oferta se cerró, y cómo. */
+export const TRADE_CLOSED_MESSAGE = 'tradeClosed';
+
+export function onTrade(room: LobbyRoom, handler: (offer: TradeOffer) => void): void {
+  room.onMessage<TradeOffer>(TRADE_MESSAGE, handler);
+}
+
+export function onTradeClosed(room: LobbyRoom, handler: (closed: { id: number; text: string }) => void): void {
+  room.onMessage<{ id: number; text: string }>(TRADE_CLOSED_MESSAGE, handler);
+}
+
+export function sendTradeOffer(room: LobbyRoom, request: TradeRequest): void {
+  room.send('tradeOffer', request);
+}
+
+export function sendTradeAnswer(room: LobbyRoom, id: number, accept: boolean): void {
+  room.send('tradeAnswer', { id, accept });
+}
+
+/** Crea una cuenta con el alijo de este navegador, o entra a una. */
+export function sendAccount(room: LobbyRoom, action: 'register' | 'login', name: string, password: string): void {
+  room.send(action, { name, password });
+}
+
+export function sendLogout(room: LobbyRoom): void {
+  room.send('logout');
 }
 
 /** Queda avisado cuando llega el alijo. */

@@ -5,11 +5,16 @@
  * El GDD exige autoridad del servidor en todos los modos, así que el cliente
  * no mueve a nadie: pide un paso y el servidor decide. Todo lo que llega por
  * mensaje se valida antes de tocar el estado.
+ *
+ * Es además donde se maneja el alijo fuera de las Vaults, como pide el punto
+ * 3: venderle al mercader, comprarle, intercambiar con otros jugadores y
+ * atar el alijo a una cuenta.
  */
 import { Client, Room } from '@colyseus/core';
-import { currentStash, playerIdFromToken, type StashContents } from '../stash';
+import { currentStash, playerIdFromToken, type AccountError, type StashContents } from '../stash';
 import { DEFAULT_FACING, facingFromStep } from './direction';
-import { ITEMS_PAYLOAD } from './items';
+import { ITEMS_PAYLOAD, itemById } from './items';
+import { STOCK, countsOf, sanitizeCounts, sanitizeCredits, sellPrice, stockEntry, type ShopMessage } from './market';
 import { floorCells, generateMap, isBlocked, randomSeed, type GeneratedMap } from './map';
 import { LobbyState, MapSchema, Player, type LobbyStateType } from './state';
 import { SIGHT_RADIUS, visibleMask } from './vision';
@@ -68,7 +73,76 @@ export const STASH_MESSAGE = 'stash';
 export interface StashMessage {
   /** Cuántos de cada objeto. Vacío también si el servidor no tiene alijo. */
   contents: StashContents;
+  /** Cuántos créditos tiene. */
+  credits: number;
+  /** El nombre de su cuenta, o `null` si el alijo vive solo en el navegador. */
+  account: string | null;
 }
+
+/** Mensaje con lo que vende el mercader. Se manda al entrar y a pedido. */
+export const SHOP_MESSAGE = 'shop';
+
+/**
+ * Mensaje con el motivo de algo que no se hizo, o el resultado de algo que
+ * no cambia nada a la vista: una venta, una oferta mandada.
+ */
+export const NOTICE_MESSAGE = 'notice';
+
+export interface NoticeMessage {
+  text: string;
+}
+
+/** Mensaje con una oferta de intercambio, para quien la recibe. */
+export const TRADE_MESSAGE = 'trade';
+
+/**
+ * Una oferta de intercambio. Va con un id para que aceptar una oferta vieja,
+ * ya reemplazada por otra, no acepte la nueva sin haberla leído.
+ */
+export interface TradeOffer {
+  id: number;
+  /** Sesión de quien la hace. */
+  from: string;
+  fromName: string;
+  /** Sesión de quien la recibe. */
+  to: string;
+  /** Lo que entrega quien la hace. */
+  give: Record<string, number>;
+  giveCredits: number;
+  /** Lo que pide a cambio. */
+  want: Record<string, number>;
+  wantCredits: number;
+}
+
+/** Mensaje que avisa que una oferta ya no está: se aceptó, se rechazó o se retiró. */
+export const TRADE_CLOSED_MESSAGE = 'tradeClosed';
+
+export interface TradeClosed {
+  id: number;
+  /** Qué pasó con ella, para mostrarlo. */
+  text: string;
+}
+
+/** Lo que manda el cliente para ofrecer un intercambio. */
+export interface TradeOfferRequest {
+  to?: unknown;
+  give?: unknown;
+  giveCredits?: unknown;
+  want?: unknown;
+  wantCredits?: unknown;
+}
+
+/** Cómo se cuenta cada motivo de error de cuentas. */
+export const ACCOUNT_ERRORS: Record<AccountError, string> = {
+  'nombre-invalido': 'El nombre va de 3 a 20 letras sin acentos, números, guiones o guiones bajos.',
+  'clave-invalida': 'La clave tiene que tener por lo menos 8 caracteres.',
+  'nombre-ocupado': 'Ya hay una cuenta con ese nombre.',
+  'ya-tiene-cuenta': 'Este alijo ya tiene cuenta.',
+  'datos-incorrectos': 'Nombre o clave incorrectos.',
+};
+
+/** Intentos de entrar a una cuenta que se aceptan por conexión y por minuto. */
+const INTENTOS_POR_MINUTO = 5;
 
 /** Mismo mensaje que en la Vault: el catálogo hace falta para leer el alijo. */
 export const ITEMS_MESSAGE = 'items';
@@ -125,15 +199,236 @@ export class LobbyRoom extends Room<LobbyRoomOptions> {
     // llegar antes de que el cliente escuche, igual que la visión.
     this.onMessage(STASH_MESSAGE, (client) => this.sendStash(client));
     this.onMessage(ITEMS_MESSAGE, (client) => client.send(ITEMS_MESSAGE, ITEMS_PAYLOAD));
+    this.onMessage(SHOP_MESSAGE, (client) => client.send(SHOP_MESSAGE, { stock: STOCK } satisfies ShopMessage));
+
+    this.onMessage('sell', (client, message: { items?: unknown }) => this.sell(client, message?.items));
+    this.onMessage('buy', (client, message: { item?: unknown }) => this.buy(client, message?.item));
+    this.onMessage('tradeOffer', (client, message: TradeOfferRequest) => this.offer(client, message ?? {}));
+    this.onMessage('tradeAnswer', (client, message: { id?: unknown; accept?: unknown }) =>
+      this.answer(client, message?.id, message?.accept === true),
+    );
+    this.onMessage('tradeCancel', (client) => this.cancelOffer(client.sessionId, 'La retiró quien la hizo.'));
+
+    this.onMessage('register', (client, message: { name?: unknown; password?: unknown }) =>
+      this.account(client, 'register', message?.name, message?.password),
+    );
+    this.onMessage('login', (client, message: { name?: unknown; password?: unknown }) =>
+      this.account(client, 'login', message?.name, message?.password),
+    );
+    this.onMessage('logout', (client) => this.logout(client));
   }
 
   /** De qué jugador es cada sesión, para leerle el alijo. */
   private duenos = new Map<string, string>();
 
+  /** El hash del token de cada sesión, para atarlo o desatarlo de una cuenta. */
+  private tokens = new Map<string, string>();
+
+  /** La oferta abierta de cada sesión: una por vez, la nueva reemplaza a la vieja. */
+  private ofertas = new Map<string, TradeOffer>();
+  private siguienteOferta = 1;
+
+  /** Cuándo intentó entrar a una cuenta cada sesión, para frenar a quien prueba claves. */
+  private intentos = new Map<string, number[]>();
+
   private sendStash(client: Client): void {
     const player = this.duenos.get(client.sessionId);
-    const contents = player ? (currentStash()?.contents(player) ?? {}) : {};
-    client.send(STASH_MESSAGE, { contents } satisfies StashMessage);
+    const stash = currentStash();
+    const contents = player ? (stash?.contents(player) ?? {}) : {};
+    const credits = player ? (stash?.credits(player) ?? 0) : 0;
+    const account = player ? (stash?.accountName(player) ?? null) : null;
+    client.send(STASH_MESSAGE, { contents, credits, account } satisfies StashMessage);
+  }
+
+  private notice(client: Client | undefined, text: string): void {
+    client?.send(NOTICE_MESSAGE, { text } satisfies NoticeMessage);
+  }
+
+  /** El jugador y el alijo de una sesión, o `null` avisándole por qué no. */
+  private alijoDe(client: Client): { player: string; stash: NonNullable<ReturnType<typeof currentStash>> } | null {
+    const player = this.duenos.get(client.sessionId);
+    const stash = currentStash();
+    if (!player || !stash) {
+      this.notice(client, 'Este servidor no guarda alijos, o tu navegador no mandó con qué reconocerte.');
+      return null;
+    }
+    return { player, stash };
+  }
+
+  /** Le vende al mercader. Todo o nada, a lo que vale cada cosa. */
+  sell(client: Client, raw: unknown): boolean {
+    const yo = this.alijoDe(client);
+    const items = sanitizeCounts(raw);
+    if (!yo || items.length === 0) return false;
+    const credits = items.reduce((total, id) => total + sellPrice(id), 0);
+    if (!yo.stash.exchange(yo.player, { items, credits: 0 }, { items: [], credits })) {
+      this.notice(client, 'No tenés todo eso en el alijo.');
+      return false;
+    }
+    this.notice(client, `Vendiste ${items.length} ${items.length === 1 ? 'objeto' : 'objetos'} por ${credits} créditos.`);
+    this.sendStash(client);
+    return true;
+  }
+
+  /** Le compra al mercader una unidad de lo que vende. */
+  buy(client: Client, raw: unknown): boolean {
+    const yo = this.alijoDe(client);
+    const entrada = typeof raw === 'string' ? stockEntry(raw) : undefined;
+    if (!yo || !entrada) return false;
+    const items = Array<string>(entrada.quantity).fill(entrada.id);
+    if (!yo.stash.exchange(yo.player, { items: [], credits: entrada.price }, { items, credits: 0 })) {
+      this.notice(client, `No te alcanza: cuesta ${entrada.price} créditos.`);
+      return false;
+    }
+    const nombre = itemById(entrada.id)?.name ?? entrada.id;
+    this.notice(client, `Compraste ${entrada.quantity > 1 ? `${entrada.quantity} ` : ''}${nombre} por ${entrada.price} créditos.`);
+    this.sendStash(client);
+    return true;
+  }
+
+  /**
+   * Ofrece un intercambio a otro jugador del lobby. Se revisa ya que quien
+   * ofrece tenga lo que da, para no molestar al otro con algo imposible; lo
+   * del otro se revisa al aceptar, y todo se vuelve a revisar ahí.
+   */
+  offer(client: Client, pedido: TradeOfferRequest): TradeOffer | null {
+    const yo = this.alijoDe(client);
+    if (!yo) return null;
+    const to = typeof pedido.to === 'string' ? pedido.to : '';
+    const otro = this.clients.getById(to);
+    if (!otro || to === client.sessionId || !this.duenos.has(to)) {
+      this.notice(client, 'Esa persona ya no está en el lobby.');
+      return null;
+    }
+    const give = sanitizeCounts(pedido.give);
+    const want = sanitizeCounts(pedido.want);
+    const giveCredits = sanitizeCredits(pedido.giveCredits);
+    const wantCredits = sanitizeCredits(pedido.wantCredits);
+    if (give.length + want.length === 0 && giveCredits + wantCredits === 0) return null;
+    if (this.duenos.get(to) === yo.player) {
+      this.notice(client, 'No podés intercambiar con vos mismo.');
+      return null;
+    }
+
+    const tengo = yo.stash.contents(yo.player);
+    const falta = Object.entries(countsOf(give)).some(([id, n]) => (tengo[id] ?? 0) < n);
+    if (falta || yo.stash.credits(yo.player) < giveCredits) {
+      this.notice(client, 'No tenés todo lo que ofrecés.');
+      return null;
+    }
+
+    this.cancelOffer(client.sessionId, 'La reemplazó otra.');
+    const oferta: TradeOffer = {
+      id: this.siguienteOferta++,
+      from: client.sessionId,
+      fromName: this.state.players.get(client.sessionId)?.name ?? '',
+      to,
+      give: countsOf(give),
+      giveCredits,
+      want: countsOf(want),
+      wantCredits,
+    };
+    this.ofertas.set(client.sessionId, oferta);
+    otro.send(TRADE_MESSAGE, oferta);
+    this.notice(client, `Le mandaste la oferta a ${this.state.players.get(to)?.name ?? 'otro jugador'}.`);
+    return oferta;
+  }
+
+  /** Acepta o rechaza una oferta recibida. Aceptar hace el intercambio entero o nada. */
+  answer(client: Client, rawId: unknown, accept: boolean): boolean {
+    const oferta = [...this.ofertas.values()].find((o) => o.id === rawId && o.to === client.sessionId);
+    if (!oferta) {
+      this.notice(client, 'Esa oferta ya no está.');
+      return false;
+    }
+    this.ofertas.delete(oferta.from);
+    const de = this.clients.getById(oferta.from);
+    const cerrar = (text: string) => {
+      for (const c of [client, de]) c?.send(TRADE_CLOSED_MESSAGE, { id: oferta.id, text } satisfies TradeClosed);
+    };
+    if (!accept) {
+      cerrar('Oferta rechazada.');
+      return false;
+    }
+
+    const stash = currentStash();
+    const a = this.duenos.get(oferta.from);
+    const b = this.duenos.get(client.sessionId);
+    const lista = (counts: Record<string, number>) => sanitizeCounts(counts);
+    const hecho =
+      stash !== null &&
+      a !== undefined &&
+      b !== undefined &&
+      stash.trade(
+        a,
+        { items: lista(oferta.give), credits: oferta.giveCredits },
+        b,
+        { items: lista(oferta.want), credits: oferta.wantCredits },
+      );
+    if (!hecho) {
+      cerrar('No se pudo: a alguno de los dos ya le falta algo de lo acordado.');
+      return false;
+    }
+    cerrar('Intercambio hecho.');
+    if (de) this.sendStash(de);
+    this.sendStash(client);
+    return true;
+  }
+
+  /** Retira la oferta abierta de una sesión, si tiene una. */
+  private cancelOffer(sessionId: string, text: string): void {
+    const oferta = this.ofertas.get(sessionId);
+    if (!oferta) return;
+    this.ofertas.delete(sessionId);
+    for (const id of [oferta.from, oferta.to]) {
+      this.clients.getById(id)?.send(TRADE_CLOSED_MESSAGE, { id: oferta.id, text } satisfies TradeClosed);
+    }
+  }
+
+  /**
+   * Crea una cuenta o entra a una, desde la sesión. Después de cualquiera de
+   * las dos, la sesión ya es del jugador de la cuenta y se le manda su alijo.
+   */
+  account(client: Client, accion: 'register' | 'login', rawName: unknown, rawPassword: unknown): boolean {
+    const stash = currentStash();
+    const token = this.tokens.get(client.sessionId);
+    if (!stash || !token) {
+      this.notice(client, 'Este servidor no guarda alijos, o tu navegador no mandó con qué reconocerte.');
+      return false;
+    }
+    const ahora = Date.now();
+    const recientes = (this.intentos.get(client.sessionId) ?? []).filter((t) => ahora - t < 60_000);
+    if (recientes.length >= INTENTOS_POR_MINUTO) {
+      this.notice(client, 'Demasiados intentos. Esperá un minuto.');
+      return false;
+    }
+    this.intentos.set(client.sessionId, [...recientes, ahora]);
+
+    const name = typeof rawName === 'string' ? rawName.trim() : '';
+    const password = typeof rawPassword === 'string' ? rawPassword : '';
+    const resultado = accion === 'register' ? stash.register(token, name, password) : stash.login(token, name, password);
+    if ('error' in resultado) {
+      this.notice(client, ACCOUNT_ERRORS[resultado.error]);
+      return false;
+    }
+    this.duenos.set(client.sessionId, resultado.player);
+    // Una oferta hecha con el alijo de antes ya no corresponde.
+    this.cancelOffer(client.sessionId, 'Quien la hizo cambió de cuenta.');
+    this.notice(client, accion === 'register' ? 'Cuenta creada.' : 'Entraste a tu cuenta.');
+    this.sendStash(client);
+    return true;
+  }
+
+  /** Desata este navegador de su cuenta. Lo guardado queda en la cuenta. */
+  logout(client: Client): void {
+    const stash = currentStash();
+    const token = this.tokens.get(client.sessionId);
+    if (!stash || !token) return;
+    stash.logout(token);
+    this.duenos.set(client.sessionId, stash.resolve(token));
+    this.cancelOffer(client.sessionId, 'Quien la hizo cambió de cuenta.');
+    this.notice(client, 'Saliste de la cuenta. Lo guardado sigue en ella.');
+    this.sendStash(client);
   }
 
   override onJoin(client: Client, options: JoinOptions = {}): void {
@@ -155,16 +450,27 @@ export class LobbyRoom extends Room<LobbyRoomOptions> {
       }),
     );
 
-    const player = playerIdFromToken(options.token);
-    if (player) this.duenos.set(client.sessionId, player);
+    const token = playerIdFromToken(options.token);
+    if (token) {
+      this.tokens.set(client.sessionId, token);
+      this.duenos.set(client.sessionId, currentStash()?.resolve(token) ?? token);
+    }
     client.send(ITEMS_MESSAGE, ITEMS_PAYLOAD);
+    client.send(SHOP_MESSAGE, { stock: STOCK } satisfies ShopMessage);
     this.sendStash(client);
     this.sendVision(client);
   }
 
   override onLeave(client: Client): void {
+    this.cancelOffer(client.sessionId, 'Quien la hizo se fue del lobby.');
+    // Las ofertas que le hicieron a quien se va tampoco tienen a quién llegar.
+    for (const oferta of [...this.ofertas.values()]) {
+      if (oferta.to === client.sessionId) this.cancelOffer(oferta.from, 'Se fue a quien se la hiciste.');
+    }
     this.state.players.delete(client.sessionId);
     this.duenos.delete(client.sessionId);
+    this.tokens.delete(client.sessionId);
+    this.intentos.delete(client.sessionId);
   }
 
   /** Aplica un paso si es válido. Devuelve si se movió, para los tests. */

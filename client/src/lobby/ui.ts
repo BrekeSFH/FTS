@@ -14,25 +14,37 @@ import {
   onExtracted,
   onItems,
   onNotice,
+  onShop,
   onShot,
   onStash,
+  onTrade,
+  onTradeClosed,
   onVision,
   requestItems,
+  requestShop,
   requestStash,
   requestVision,
+  sendAccount,
   sendAttack,
+  sendBuy,
   sendDrop,
   sendEndTurn,
   sendEquip,
   sendUse,
   sendLoot,
+  sendLogout,
+  sendSell,
   sendStep,
+  sendTradeAnswer,
+  sendTradeOffer,
   stepForKey,
   type CatalogItem,
   type LobbyPlayer,
   type LobbyRoom,
 } from './connection';
 import { floorView, ownFloor } from './floors';
+import type { StockEntry, TradeOffer } from './market';
+import { setupMarket, type MarketView } from './marketUi';
 import { createFog, type Fog } from './fog';
 import { playerToken } from './identity';
 import { loadoutFrom, stashRows, valueOfItems, type StashContents } from './stash';
@@ -64,6 +76,11 @@ export interface LobbyElements {
    * lobby y queda a la vista al desconectarse, para elegir antes de bajar.
    */
   stash?: HTMLElement | null;
+  /**
+   * Panel de comercio: cuenta, créditos, mercader e intercambios. Solo se ve
+   * con el lobby conectado, porque todo lo que ofrece pasa por el servidor.
+   */
+  market?: HTMLElement | null;
   /**
    * Aviso de qué semilla de tiles usa la sala, al conectarse y si cambia.
    *
@@ -120,6 +137,42 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
   let alijo: StashContents | null = null;
   /** Cuántos de cada objeto se eligió llevar a la Vault. */
   const seleccion = new Map<string, number>();
+  /** Créditos y cuenta, como los mandó el lobby con el alijo. */
+  let creditos = 0;
+  let cuenta: string | null = null;
+  /** Lo que vende el mercader. */
+  let stock: StockEntry[] = [];
+  /** La oferta de intercambio que le hicieron, si hay una abierta. */
+  let ofertaRecibida: TradeOffer | null = null;
+
+  const market: MarketView | null = ui.market
+    ? setupMarket(ui.market, {
+        buy: (item) => room && sendBuy(room, item),
+        sell: (items) => room && sendSell(room, items),
+        offer: (request) => room && sendTradeOffer(room, request),
+        answer: (id, accept) => room && sendTradeAnswer(room, id, accept),
+        register: (name, password) => room && sendAccount(room, 'register', name, password),
+        login: (name, password) => room && sendAccount(room, 'login', name, password),
+        logout: () => room && sendLogout(room),
+      })
+    : null;
+
+  /**
+   * El panel de comercio, con lo último que se sabe. Las secciones que no
+   * cambiaron no se tocan, así que se puede llamar en cada cuadro.
+   */
+  const actualizarComercio = (): void => {
+    if (!ui.market || !market) return;
+    const enLobby = room !== null && !salaPorTurnos() && alijo !== null;
+    ui.market.hidden = !enLobby;
+    if (!enLobby || !room?.state?.players) return;
+    const others: Array<{ sessionId: string; name: string }> = [];
+    room.state.players.forEach((p, sessionId) => {
+      if (sessionId !== room!.sessionId) others.push({ sessionId, name: p.name });
+    });
+    others.sort((a, b) => a.name.localeCompare(b.name) || a.sessionId.localeCompare(b.sessionId));
+    market.update({ catalogo, stock, contents: alijo ?? {}, credits: creditos, account: cuenta, others, incoming: ofertaRecibida });
+  };
 
   /**
    * El panel del alijo. Se rehace solo cuando llega el alijo o el catálogo, no
@@ -225,6 +278,7 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     });
     actualizarTurno();
     actualizarMochila();
+    actualizarComercio();
     avisarSemilla();
   };
 
@@ -348,6 +402,8 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     tileSeed = null;
     mochilaDibujada = '';
     if (ui.load) ui.load.hidden = true;
+    ofertaRecibida = null;
+    if (ui.market) ui.market.hidden = true;
     setStatus(reason, isError);
     actualizarTurno();
   };
@@ -435,13 +491,33 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
           dibujarAlijo();
           draw();
         });
-        onStash(joined, ({ contents }) => {
+        onStash(joined, ({ contents, credits, account }) => {
           alijo = contents;
+          creditos = credits ?? 0;
+          cuenta = account ?? null;
           dibujarAlijo();
+          actualizarComercio();
+        });
+        onShop(joined, (m) => {
+          stock = m.stock;
+          actualizarComercio();
+        });
+        onTrade(joined, (oferta) => {
+          ofertaRecibida = oferta;
+          setStatus(`${oferta.fromName || 'Alguien'} te hizo una oferta: mirala en Comercio.`);
+          actualizarComercio();
+        });
+        onTradeClosed(joined, ({ id, text }) => {
+          if (ofertaRecibida?.id === id) ofertaRecibida = null;
+          setStatus(text);
+          actualizarComercio();
         });
         // Los dos se mandan al entrar, pero pudieron salir antes del handler.
         requestItems(joined);
-        if (!salaPorTurnos()) requestStash(joined);
+        if (!salaPorTurnos()) {
+          requestStash(joined);
+          requestShop(joined);
+        }
         onDied(joined, ({ loot, by }) => {
           despedida = `Te mató ${by}.${loot > 0 ? ` Tu botín (${loot}) quedó donde caíste.` : ''}`;
         });
