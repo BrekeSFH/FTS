@@ -86,6 +86,23 @@ describe('entrar con equipo', () => {
     expect(stash.contents(YO)).toEqual({ escopeta: 1 });
   });
 
+  it('no se entra con más de lo que se puede cargar, y no se saca nada', async () => {
+    stash.add(YO, ['metal', 'metal', 'cuero']);
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
+    await expect(entrarVault(room, { token: TOKEN, loadout: ['metal', 'metal', 'cuero'] })).rejects.toThrow(/pesa/);
+    expect(stash.contents(YO)).toEqual({ cuero: 1, metal: 2 });
+  });
+
+  it('se entra con munición, de a muchas', async () => {
+    stash.add(YO, ['pistola', ...Array<string>(50).fill('balas-9mm')]);
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
+    const client = await entrarVault(room, { token: TOKEN, loadout: ['pistola', ...Array<string>(50).fill('balas-9mm')] });
+    const c = room.state.players.get(client.sessionId)!;
+    expect([...c.items].filter((id) => id === 'balas-9mm')).toHaveLength(50);
+    expect(c.weapon).toBe('pistola');
+    expect(stash.contents(YO)).toEqual({});
+  });
+
   it('sin token no se puede pedir equipo', async () => {
     const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     await expect(entrarVault(room, { loadout: ['escopeta'] })).rejects.toThrow();

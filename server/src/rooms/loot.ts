@@ -88,11 +88,26 @@ export function placeCaches(floors: readonly DungeonFloor[], seed: number): Cach
   return out;
 }
 
-/** Unos objetos al azar, del nivel que corresponde a un piso. */
+/**
+ * Unos objetos al azar, del nivel que corresponde a un piso.
+ *
+ * La munición sale en montones, de la mitad a todo su `stack`: una bala
+ * suelta no serviría de nada, y es un hallazgo como cualquier otro.
+ */
 export function rollItems(floor: number, cuantos: number, random: () => number): string[] {
   const out: string[] = [];
-  for (let i = 0; i < cuantos; i++) out.push(randomItemOfTier(tierForFloor(floor, random()), random()).id);
+  for (let i = 0; i < cuantos; i++) {
+    const item = randomItemOfTier(tierForFloor(floor, random()), random());
+    const n = item.kind === 'ammo' ? ammoStack(item.stack, random) : 1;
+    for (let k = 0; k < n; k++) out.push(item.id);
+  }
   return out;
+}
+
+/** Cuántas balas trae un montón: de la mitad de `stack` a `stack`. */
+export function ammoStack(stack: number, random: () => number): number {
+  const mitad = Math.ceil(stack / 2);
+  return mitad + Math.floor(random() * (stack - mitad + 1));
 }
 
 /**

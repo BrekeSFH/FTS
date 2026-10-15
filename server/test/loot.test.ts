@@ -46,10 +46,13 @@ describe('placeCaches', () => {
     expect(media[2]).toBeGreaterThan(media[1] * 1.2);
   });
 
-  it('solo objetos del catálogo, de uno a tres, y nunca el equipo inicial', () => {
+  it('solo objetos del catálogo, de uno a tres hallazgos, y nunca el equipo inicial', () => {
     for (const c of placeCaches(pisos, 7)) {
-      expect(c.items.length).toBeGreaterThanOrEqual(1);
-      expect(c.items.length).toBeLessThanOrEqual(3);
+      // Un montón de balas es un hallazgo solo, aunque sean muchos objetos.
+      const sueltos = c.items.filter((id) => itemById(id)?.kind !== 'ammo').length;
+      const montones = new Set(c.items.filter((id) => itemById(id)?.kind === 'ammo')).size;
+      expect(sueltos + montones).toBeGreaterThanOrEqual(1);
+      expect(sueltos + montones).toBeLessThanOrEqual(3);
       for (const id of c.items) {
         expect(itemById(id), id).toBeDefined();
         expect(itemById(id)!.tier).toBeGreaterThan(0);

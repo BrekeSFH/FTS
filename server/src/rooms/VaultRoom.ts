@@ -13,7 +13,18 @@ import { Client, Room } from '@colyseus/core';
 import { currentStash, playerIdFromToken } from '../stash';
 import { ENEMY_PARTY, esEnemigo, nextStep, placeEnemies } from './ai';
 import { HP_MAX, canShoot, hitChance, resolveShot } from './combat';
-import { ITEMS, STARTING_WEAPON, armorReduction, isStashable, itemById, valueOf, weaponStats } from './items';
+import {
+  CARGA_MAXIMA,
+  ITEMS_PAYLOAD,
+  STARTING_WEAPON,
+  armorReduction,
+  fits,
+  isStashable,
+  itemById,
+  valueOf,
+  weightOf,
+  type WeaponStats,
+} from './items';
 import { whoCanAct, type Combatant as Luchador } from './contact';
 import { DEFAULT_FACING, facingFromStep } from './direction';
 import {
@@ -88,10 +99,22 @@ export const EXTRACTED_MESSAGE = 'extracted';
  */
 export const ITEMS_MESSAGE = 'items';
 
+/**
+ * Mensaje con el motivo de algo que no se hizo, cuando no se ve a simple
+ * vista: sin munición o sin lugar, el jugador apretaría y no pasaría nada.
+ */
+export const NOTICE_MESSAGE = 'notice';
+
+export interface NoticeMessage {
+  text: string;
+}
+
 /** Cuesta cambiar de arma o de armadura. Poco, pero no es gratis en combate. */
 export const AP_EQUIPAR = 1;
 /** Cuesta usar un consumible. */
 export const AP_USAR = 2;
+/** Cuesta soltar algo. Lo mismo que equipar: es sacarse algo de encima. */
+export const AP_SOLTAR = 1;
 
 export interface ItemMessage {
   /** Id del catálogo de un objeto que se lleva encima. */
@@ -176,8 +199,11 @@ export interface JoinOptions {
   loadout?: unknown;
 }
 
-/** Cuántos objetos se pueden pedir para entrar, como mucho. */
-const EQUIPO_MAXIMO = 40;
+/**
+ * Cuántos objetos se pueden pedir para entrar, como mucho. Es alto porque
+ * cada bala cuenta como uno; el límite que importa es el peso.
+ */
+const EQUIPO_MAXIMO = 600;
 
 /**
  * La lista de equipo que pide el cliente, saneada: solo ids del catálogo que
@@ -348,6 +374,11 @@ export class VaultRoom extends Room<VaultRoomOptions> {
       this.publish();
     });
 
+    this.onMessage('drop', (client, message: ItemMessage) => {
+      this.tryDrop(client.sessionId, typeof message?.item === 'string' ? message.item : '');
+      this.publish();
+    });
+
     this.onMessage('endTurn', (client) => {
       this.endTurn(client.sessionId);
       this.publish();
@@ -356,7 +387,7 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     this.onMessage(VISION_MESSAGE, (client) => this.sendVision(client));
     // Se manda al entrar, pero como con la visión, el cliente puede no estar
     // escuchando todavía; puede pedirlo.
-    this.onMessage(ITEMS_MESSAGE, (client) => client.send(ITEMS_MESSAGE, ITEMS));
+    this.onMessage(ITEMS_MESSAGE, (client) => client.send(ITEMS_MESSAGE, ITEMS_PAYLOAD));
 
     this.setSimulationInterval(() => {
       if (!this.turns) return;
@@ -375,6 +406,11 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     // quitarle nada a quien después no puede entrar.
     const player = playerIdFromToken(options.token);
     const loadout = sanitizeLoadout(options.loadout);
+    // Se mide antes de tocar el alijo, con la pistola prestada incluida, que
+    // también pesa: entrar con más de lo que se puede cargar no tiene arreglo.
+    const conArma = loadout.some((id) => itemById(id)?.kind === 'weapon') ? loadout : [...loadout, STARTING_WEAPON];
+    const peso = weightOf(conArma);
+    if (peso > CARGA_MAXIMA) throw new Error(`Eso pesa ${peso} kg y se puede cargar hasta ${CARGA_MAXIMA}`);
     if (loadout.length > 0) {
       const stash = currentStash();
       if (!player || !stash) throw new Error('Para entrar con equipo hace falta un alijo');
@@ -420,7 +456,7 @@ export class VaultRoom extends Room<VaultRoomOptions> {
         // hay ronda, y sin ronda la IA no tiene cuándo jugar.
         startInstance([...this.enemigos(), client.sessionId], TURNO_MS, now);
 
-    client.send(ITEMS_MESSAGE, ITEMS);
+    client.send(ITEMS_MESSAGE, ITEMS_PAYLOAD);
     this.publish();
     this.sendVision(client);
   }
@@ -464,8 +500,16 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     const blanco = this.state.players.get(targetId);
     if (!tirador || !blanco || sessionId === targetId) return null;
     if (!this.activos().has(sessionId)) return null;
-    const arma = weaponStats(tirador.weapon);
+    const arma = this.armaDe(tirador);
+    if (!arma) {
+      this.avisar(sessionId, 'No tenés un arma en la mano.');
+      return null;
+    }
     if (tirador.ap < arma.ap) return null;
+    if (arma.ammo && !tirador.items.includes(arma.ammo)) {
+      this.avisar(sessionId, `Sin munición: hace falta ${itemById(arma.ammo)?.name ?? arma.ammo}.`);
+      return null;
+    }
     if (!canShoot(this.mapOf(tirador.floor), tirador, blanco, arma.range)) return null;
 
     const facing = facingFromStep(Math.sign(blanco.x - tirador.x), Math.sign(blanco.y - tirador.y));
@@ -475,6 +519,8 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     const dano = arma.damageMin + this.tirar(arma.damageMax - arma.damageMin + 1) - 1;
     const { hit, damage } = resolveShot(chance, this.tirar(100), dano, armorReduction(blanco.armor));
     tirador.ap -= arma.ap;
+    // Cada disparo gasta una, pegue o no.
+    if (arma.ammo) this.quitar(tirador, arma.ammo);
 
     const resultado: ShotMessage = {
       from: sessionId,
@@ -512,12 +558,32 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     if (!esEnemigo(sessionId)) this.fallen.push({ name, party, loot, items });
     this.botinPerdido.set(sessionId, loot);
     this.rastro.delete(sessionId);
-    if (items.length > 0) {
-      this.caches.push({ floor, x, y, items });
-      this.state.caches.push(new LootCache({ floor, x, y, looted: false }));
-    }
+    this.dejarEnElPiso(floor, x, y, items);
     this.state.players.delete(sessionId);
     if (this.turns) this.turns = leave(this.turns, sessionId, Date.now());
+  }
+
+  /**
+   * El arma con la que alguien puede disparar: la equipada, si la sigue
+   * llevando. `null` si no tiene ninguna, por ejemplo porque la soltó.
+   */
+  armaDe(combatant: CombatantType): WeaponStats | null {
+    const item = itemById(combatant.weapon);
+    if (item?.kind !== 'weapon' || !combatant.items.includes(item.id)) return null;
+    return item.weapon;
+  }
+
+  /** Le cuenta a alguien por qué no pasó lo que pidió. A la IA, a nadie. */
+  private avisar(sessionId: string, text: string): void {
+    this.clients.getById(sessionId)?.send(NOTICE_MESSAGE, { text } satisfies NoticeMessage);
+  }
+
+  /** Le saca a alguien una unidad de un objeto, la última que juntó. */
+  private quitar(combatant: CombatantType, id: string): void {
+    const i = combatant.items.lastIndexOf(id);
+    if (i < 0) return;
+    combatant.items.splice(i, 1);
+    combatant.loot = valueOf(combatant.items);
   }
 
   /** El mapa de un piso. */
@@ -663,17 +729,20 @@ export class VaultRoom extends Room<VaultRoomOptions> {
       const yo = this.state.players.get(id);
       if (!yo || yo.ap <= 0) return;
       const map = this.mapOf(yo.floor);
+      // Sin arma o sin balas no tiene con qué pelear: se queda donde está.
+      const arma = this.armaDe(yo);
+      if (!arma || (arma.ammo && !yo.items.includes(arma.ammo))) return;
 
       const blanco = this.humanos()
         .map((h) => ({ h, c: this.state.players.get(h)! }))
-        .filter(({ c }) => canShoot(map, yo, c, weaponStats(yo.weapon).range))
+        .filter(({ c }) => canShoot(map, yo, c, arma.range))
         .sort((a, b) => Math.hypot(a.c.x - yo.x, a.c.y - yo.y) - Math.hypot(b.c.x - yo.x, b.c.y - yo.y))[0];
 
       if (blanco) {
         this.rastro.set(id, { x: blanco.c.x, y: blanco.c.y });
         // Sin acción para un disparo, se queda: acercarse a alguien que ya
         // tiene a tiro solo lo expondría más.
-        if (yo.ap < weaponStats(yo.weapon).ap) return;
+        if (yo.ap < arma.ap) return;
         const resultado = this.tryAttack(id, blanco.h);
         if (!resultado) return;
         this.announceShot(resultado);
@@ -719,8 +788,23 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     );
     if (i < 0) return false;
 
-    this.state.caches[i].looted = true;
-    this.give(combatant, this.caches[i].items);
+    // Se lleva lo que le entra, en el orden en que está, y lo demás queda.
+    // Partir un montón de balas está bien: cada una es un objeto.
+    const cache = this.caches[i];
+    const lleva: string[] = [];
+    const queda: string[] = [];
+    for (const id of cache.items) {
+      if (fits([...combatant.items, ...lleva], [id])) lleva.push(id);
+      else queda.push(id);
+    }
+    if (lleva.length === 0) {
+      this.avisar(sessionId, `No te entra nada más: llevás ${weightOf(combatant.items)} de ${CARGA_MAXIMA} kg.`);
+      return false;
+    }
+    cache.items = queda;
+    this.state.caches[i].looted = queda.length === 0;
+    if (queda.length > 0) this.avisar(sessionId, 'No te entró todo: el resto quedó en el contenedor.');
+    this.give(combatant, lleva);
     combatant.ap -= AP_SAQUEO;
     if (combatant.ap === 0) this.endTurn(sessionId);
     return true;
@@ -806,6 +890,47 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     combatant.ap -= AP_USAR;
     if (combatant.ap === 0) this.endTurn(sessionId);
     return true;
+  }
+
+  /**
+   * Suelta algo en la celda propia, para hacer lugar. Un objeto suelto, o
+   * toda la munición de ese tipo de una vez: soltar balas de a una sería
+   * apretar cuarenta veces. Queda en un contenedor que cualquiera puede
+   * saquear, también quien lo soltó.
+   *
+   * Lo prestado no se suelta: no es de quien lo lleva.
+   */
+  tryDrop(sessionId: string, itemId: string): boolean {
+    const item = itemById(itemId);
+    if (!item || item.noStash) return false;
+    const combatant = this.puedeGastar(sessionId, AP_SOLTAR);
+    if (!combatant || !combatant.items.includes(itemId)) return false;
+
+    const cuantos = item.kind === 'ammo' ? combatant.items.filter((id) => id === itemId).length : 1;
+    for (let n = 0; n < cuantos; n++) this.quitar(combatant, itemId);
+    if (combatant.weapon === itemId && !combatant.items.includes(itemId)) combatant.weapon = '';
+    if (combatant.armor === itemId && !combatant.items.includes(itemId)) combatant.armor = '';
+    this.dejarEnElPiso(combatant.floor, combatant.x, combatant.y, Array<string>(cuantos).fill(itemId));
+
+    combatant.ap -= AP_SOLTAR;
+    if (combatant.ap === 0) this.endTurn(sessionId);
+    return true;
+  }
+
+  /**
+   * Deja objetos en una celda: en el contenedor que ya haya ahí, o en uno
+   * nuevo. Dos contenedores en la misma celda no se podrían distinguir.
+   */
+  private dejarEnElPiso(floor: number, x: number, y: number, items: readonly string[]): void {
+    if (items.length === 0) return;
+    const i = this.caches.findIndex((c) => c.floor === floor && c.x === x && c.y === y);
+    if (i >= 0) {
+      this.caches[i].items.push(...items);
+      this.state.caches[i].looted = false;
+      return;
+    }
+    this.caches.push({ floor, x, y, items: [...items] });
+    this.state.caches.push(new LootCache({ floor, x, y, looted: false }));
   }
 
   /** Cierra el turno de alguien, si es suyo para cerrar. */

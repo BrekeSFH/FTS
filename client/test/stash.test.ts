@@ -6,10 +6,10 @@ import { loadoutFrom, stashRows, valueOfItems } from '../src/lobby/stash';
 const CATALOGO = new Map<string, CatalogItem>(
   (
     [
-      { id: 'escopeta', name: 'Escopeta', kind: 'weapon', value: 18, tier: 1 },
-      { id: 'metal', name: 'Armadura de metal', kind: 'armor', value: 28, tier: 2 },
-      { id: 'estimulante', name: 'Estimulante', kind: 'consumable', value: 8, tier: 1 },
-      { id: 'chatarra', name: 'Chatarra', kind: 'valuable', value: 3, tier: 1 },
+      { id: 'escopeta', name: 'Escopeta', kind: 'weapon', value: 18, tier: 1, weight: 4 },
+      { id: 'metal', name: 'Armadura de metal', kind: 'armor', value: 28, tier: 2, weight: 12 },
+      { id: 'estimulante', name: 'Estimulante', kind: 'consumable', value: 8, tier: 1, weight: 0.2 },
+      { id: 'chatarra', name: 'Chatarra', kind: 'valuable', value: 3, tier: 1, weight: 2 },
     ] satisfies CatalogItem[]
   ).map((i) => [i.id, i]),
 );

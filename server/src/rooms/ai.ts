@@ -13,8 +13,8 @@
  * persona.
  */
 import { STAIRS_DOWN, STAIRS_UP, createRandom, isBlocked, type Cell, type DungeonFloor } from './map';
-import { ITEMS, tierForFloor } from './items';
-import { rollItems } from './loot';
+import { ITEMS, itemById, tierForFloor, weaponStats } from './items';
+import { ammoStack, rollItems } from './loot';
 
 /** La party de los enemigos. No está entre las que puede pedir un jugador. */
 export const ENEMY_PARTY = 'Saqueadores';
@@ -88,11 +88,22 @@ export function placeEnemies(floors: readonly DungeonFloor[], seed: number): Ene
         hp: VIDA_BASE + floor * VIDA_POR_PISO,
         weapon,
         armor,
-        items: [weapon, ...(armor ? [armor] : []), ...rollItems(floor, 1, random)],
+        items: [weapon, ...(armor ? [armor] : []), ...municionPara(weapon, random), ...rollItems(floor, 1, random)],
       });
     }
   }
   return out;
+}
+
+/**
+ * Lo que lleva un enemigo para su arma: dos montones. Sin munición no
+ * podría disparar, y al morir es parte de lo que deja.
+ */
+function municionPara(weapon: string, random: () => number): string[] {
+  const ammo = weaponStats(weapon).ammo;
+  const item = ammo ? itemById(ammo) : undefined;
+  if (item?.kind !== 'ammo') return [];
+  return Array<string>(ammoStack(item.stack, random) + ammoStack(item.stack, random)).fill(item.id);
 }
 
 /** Los ocho pasos posibles. Primero los rectos, para que el camino no zigzaguee. */

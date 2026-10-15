@@ -13,7 +13,7 @@ import { FLOOR, isBlocked } from '../src/rooms/map';
 import { SIGHT_RADIUS, visibleMask } from '../src/rooms/vision';
 import { ENEMY_PARTY } from '../src/rooms/ai';
 import { HP_MAX } from '../src/rooms/combat';
-import { ITEMS, STARTING_WEAPON, valueOf, weaponStats } from '../src/rooms/items';
+import { CARGA_MAXIMA, ITEMS, STARTING_WEAPON, itemById, valueOf, weaponStats } from '../src/rooms/items';
 import { PRIMERA_SALIDA, exitAt } from '../src/rooms/loot';
 import {
   AP_POR_TURNO,
@@ -470,8 +470,9 @@ describe('saqueo y extracción', () => {
     c.x = cache.x;
     c.y = cache.y;
 
+    const adentro = [...cache.items];
     expect(room.tryLoot(client.sessionId)).toBe(true);
-    const esperado = [STARTING_WEAPON, ...cache.items];
+    const esperado = [STARTING_WEAPON, ...adentro];
     expect([...c.items]).toEqual(esperado);
     expect(c.loot).toBe(valueOf(esperado));
     expect(c.ap).toBe(AP_POR_TURNO - AP_SAQUEO);
@@ -812,7 +813,12 @@ describe('los enemigos', () => {
       if (!room.tryAttack(client.sessionId, enemigo)) rondaSiguiente(room);
     }
     expect(room.state.players.has(enemigo)).toBe(false);
-    expect(room.caches[contenedores]).toEqual({ floor: 1, x, y, items });
+    // Deja todo lo que llevaba. Las balas que gastó disparando, no.
+    const dejo = room.caches[contenedores];
+    expect(dejo).toMatchObject({ floor: 1, x, y });
+    const esBala = (id: string) => itemById(id)?.kind === 'ammo';
+    expect(dejo.items.filter((id) => !esBala(id))).toEqual(items.filter((id) => !esBala(id)));
+    expect(dejo.items.filter(esBala).length).toBeLessThanOrEqual(items.filter(esBala).length);
     expect(room.fallen).toEqual([]);
     expect(room.turns!.participants).not.toContain(enemigo);
   });
@@ -839,7 +845,7 @@ describe('objetos', () => {
     expect(c.weapon).toBe(STARTING_WEAPON);
     expect(c.armor).toBe('');
     expect(c.loot).toBe(valueOf([STARTING_WEAPON]));
-    expect(catalogo).toEqual(ITEMS);
+    expect(catalogo).toEqual({ items: ITEMS, maxCarry: CARGA_MAXIMA });
   });
 
   /** Un jugador solo, con su turno, y unos objetos en la mochila. */
@@ -909,7 +915,7 @@ describe('objetos', () => {
     const [tira, recibe] = room.activos().has(uno.sessionId) ? [a, b] : [b, a];
     const tiraId = tira === a ? uno.sessionId : dos.sessionId;
     const recibeId = tira === a ? dos.sessionId : uno.sessionId;
-    tira.items.push('subfusil');
+    tira.items.push('subfusil', 'balas-9mm');
     tira.weapon = 'subfusil';
 
     expect(room.tryAttack(tiraId, recibeId)).not.toBeNull();

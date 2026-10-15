@@ -284,6 +284,11 @@ pre {
   margin-left: auto;
 }
 
+/* Un segundo botón en la fila queda pegado al primero. */
+.inventory button.next {
+  margin-left: 0;
+}
+
 /* Alijo del lobby: lo guardado y qué llevar a la Vault. */
 .stash {
   margin: 0.75rem 0;

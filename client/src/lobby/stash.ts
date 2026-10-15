@@ -29,10 +29,11 @@ const TIPO: Record<CatalogItem['kind'], string> = {
   armor: 'armadura',
   consumable: 'consumible',
   valuable: 'de valor',
+  ammo: 'munición',
 };
 
 /** Orden de las filas: primero lo que se usa para pelear, después el resto. */
-const ORDEN: Record<CatalogItem['kind'], number> = { weapon: 0, armor: 1, consumable: 2, valuable: 3 };
+const ORDEN: Record<CatalogItem['kind'], number> = { weapon: 0, ammo: 1, armor: 2, consumable: 3, valuable: 4 };
 
 export function stashRows(
   contents: StashContents,

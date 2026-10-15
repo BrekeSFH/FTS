@@ -77,16 +77,50 @@ export interface LobbyPlayer {
 export interface CatalogItem {
   id: string;
   name: string;
-  kind: 'weapon' | 'armor' | 'consumable' | 'valuable';
+  kind: 'weapon' | 'armor' | 'consumable' | 'valuable' | 'ammo';
   value: number;
   tier: number;
-  weapon?: { damageMin: number; damageMax: number; ap: number; range: number; accuracy: number };
+  /** Cuánto pesa, en kilos. */
+  weight: number;
+  /** Si no se puede guardar en el alijo: lo prestado. */
+  noStash?: boolean;
+  weapon?: {
+    damageMin: number;
+    damageMax: number;
+    ap: number;
+    range: number;
+    accuracy: number;
+    /** Qué munición gasta. Sin esto no gasta ninguna. */
+    ammo?: string;
+  };
   reduction?: number;
   heal?: number;
 }
 
 /** Mensaje con el catálogo de objetos. Llega al entrar y se puede pedir. */
 export const ITEMS_MESSAGE = 'items';
+
+/** Lo que trae ese mensaje: el catálogo y cuánto se puede cargar. */
+export interface ItemsMessage {
+  items: CatalogItem[];
+  /** Kilos que se pueden llevar encima. */
+  maxCarry: number;
+}
+
+/**
+ * Mensaje con el motivo de algo que el servidor no hizo, cuando no se ve a
+ * simple vista: sin munición, sin lugar en la mochila.
+ */
+export const NOTICE_MESSAGE = 'notice';
+
+export interface NoticeMessage {
+  text: string;
+}
+
+/** Queda avisado de los motivos que manda el servidor. */
+export function onNotice(room: LobbyRoom, handler: (message: NoticeMessage) => void): void {
+  room.onMessage<NoticeMessage>(NOTICE_MESSAGE, handler);
+}
 
 /** Mensaje con el resultado de un disparo, para el que tira y el que recibe. */
 export const SHOT_MESSAGE = 'shot';
@@ -281,9 +315,14 @@ export function sendUse(room: LobbyRoom, item: string): void {
   room.send('use', { item });
 }
 
+/** Suelta un objeto en la celda propia; la munición, toda la de ese tipo. */
+export function sendDrop(room: LobbyRoom, item: string): void {
+  room.send('drop', { item });
+}
+
 /** Queda avisado cuando llega el catálogo de objetos. */
-export function onItems(room: LobbyRoom, handler: (items: CatalogItem[]) => void): void {
-  room.onMessage<CatalogItem[]>(ITEMS_MESSAGE, handler);
+export function onItems(room: LobbyRoom, handler: (message: ItemsMessage) => void): void {
+  room.onMessage<ItemsMessage>(ITEMS_MESSAGE, handler);
 }
 
 /** Pide el catálogo, por si el que se mandó al entrar llegó antes del handler. */

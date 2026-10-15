@@ -26,6 +26,11 @@ export interface WeaponStats {
   range: number;
   /** Puntos de probabilidad que suma o resta al disparo. */
   accuracy: number;
+  /**
+   * Qué munición gasta, una por disparo, como id del catálogo. Sin esto no
+   * gasta nada: es solo la de emergencia, que tiene que servir siempre.
+   */
+  ammo?: string;
 }
 
 export interface ItemBase {
@@ -34,6 +39,8 @@ export interface ItemBase {
   /** Lo que vale. La suma de lo que se lleva es el botín. */
   value: number;
   tier: Tier;
+  /** Cuánto pesa, en kilos. Lo que se lleva no puede pasar de `CARGA_MAXIMA`. */
+  weight: number;
   /**
    * Si no se puede guardar en el alijo. Es lo que se presta para poder
    * jugar: si se pudiera guardar, entrar y salir lo iría acumulando gratis.
@@ -45,36 +52,48 @@ export type Item =
   | (ItemBase & { kind: 'weapon'; weapon: WeaponStats })
   | (ItemBase & { kind: 'armor'; /** Cuánto daño quita de cada impacto. */ reduction: number })
   | (ItemBase & { kind: 'consumable'; /** Vida que devuelve al usarlo. */ heal: number })
-  | (ItemBase & { kind: 'valuable' });
+  | (ItemBase & { kind: 'valuable' })
+  | (ItemBase & {
+      kind: 'ammo';
+      /** Cuántas salen juntas en un hallazgo, como mucho. Cada una es un objeto. */
+      stack: number;
+    });
 
 export const ITEMS: readonly Item[] = [
   // Armas. La de emergencia es la que se presta a quien entra sin arma: peor
-  // que cualquier otra, no vale nada y no se puede guardar.
-  { id: 'pistola-emergencia', name: 'Pistola de emergencia', kind: 'weapon', tier: 0, value: 0, noStash: true,
+  // que cualquier otra, no vale nada, no gasta munición y no se puede guardar.
+  { id: 'pistola-emergencia', name: 'Pistola de emergencia', kind: 'weapon', tier: 0, value: 0, weight: 1, noStash: true,
     weapon: { damageMin: 4, damageMax: 8, ap: 3, range: 8, accuracy: -5 } },
-  { id: 'pistola', name: 'Pistola 9 mm', kind: 'weapon', tier: 0, value: 5,
-    weapon: { damageMin: 6, damageMax: 12, ap: 3, range: 12, accuracy: 0 } },
-  { id: 'subfusil', name: 'Subfusil', kind: 'weapon', tier: 1, value: 15,
-    weapon: { damageMin: 5, damageMax: 10, ap: 2, range: 9, accuracy: -5 } },
-  { id: 'escopeta', name: 'Escopeta', kind: 'weapon', tier: 1, value: 18,
-    weapon: { damageMin: 10, damageMax: 18, ap: 4, range: 5, accuracy: 10 } },
-  { id: 'rifle-caza', name: 'Rifle de caza', kind: 'weapon', tier: 2, value: 30,
-    weapon: { damageMin: 10, damageMax: 16, ap: 4, range: 12, accuracy: 15 } },
-  { id: 'rifle-asalto', name: 'Rifle de asalto', kind: 'weapon', tier: 2, value: 35,
-    weapon: { damageMin: 8, damageMax: 14, ap: 3, range: 11, accuracy: 0 } },
-  { id: 'rifle-laser', name: 'Rifle láser', kind: 'weapon', tier: 3, value: 60,
-    weapon: { damageMin: 14, damageMax: 22, ap: 4, range: 12, accuracy: 10 } },
+  { id: 'pistola', name: 'Pistola 9 mm', kind: 'weapon', tier: 0, value: 5, weight: 1,
+    weapon: { damageMin: 6, damageMax: 12, ap: 3, range: 12, accuracy: 0, ammo: 'balas-9mm' } },
+  { id: 'subfusil', name: 'Subfusil', kind: 'weapon', tier: 1, value: 15, weight: 3,
+    weapon: { damageMin: 5, damageMax: 10, ap: 2, range: 9, accuracy: -5, ammo: 'balas-9mm' } },
+  { id: 'escopeta', name: 'Escopeta', kind: 'weapon', tier: 1, value: 18, weight: 4,
+    weapon: { damageMin: 10, damageMax: 18, ap: 4, range: 5, accuracy: 10, ammo: 'cartuchos' } },
+  { id: 'rifle-caza', name: 'Rifle de caza', kind: 'weapon', tier: 2, value: 30, weight: 4,
+    weapon: { damageMin: 10, damageMax: 16, ap: 4, range: 12, accuracy: 15, ammo: 'balas-rifle' } },
+  { id: 'rifle-asalto', name: 'Rifle de asalto', kind: 'weapon', tier: 2, value: 35, weight: 4,
+    weapon: { damageMin: 8, damageMax: 14, ap: 3, range: 11, accuracy: 0, ammo: 'balas-rifle' } },
+  { id: 'rifle-laser', name: 'Rifle láser', kind: 'weapon', tier: 3, value: 60, weight: 5,
+    weapon: { damageMin: 14, damageMax: 22, ap: 4, range: 12, accuracy: 10, ammo: 'celdas' } },
 
-  { id: 'cuero', name: 'Armadura de cuero', kind: 'armor', tier: 1, value: 12, reduction: 2 },
-  { id: 'metal', name: 'Armadura de metal', kind: 'armor', tier: 2, value: 28, reduction: 4 },
-  { id: 'combate', name: 'Armadura de combate', kind: 'armor', tier: 3, value: 50, reduction: 6 },
+  // Munición. Cada bala es un objeto: así se guarda, se saquea y se pierde
+  // como cualquier otra cosa, sin un sistema aparte.
+  { id: 'balas-9mm', name: 'Balas 9 mm', kind: 'ammo', tier: 1, value: 1, weight: 0.02, stack: 12 },
+  { id: 'cartuchos', name: 'Cartuchos', kind: 'ammo', tier: 1, value: 1, weight: 0.05, stack: 8 },
+  { id: 'balas-rifle', name: 'Balas de rifle', kind: 'ammo', tier: 2, value: 2, weight: 0.03, stack: 10 },
+  { id: 'celdas', name: 'Celdas de energía', kind: 'ammo', tier: 3, value: 3, weight: 0.05, stack: 10 },
 
-  { id: 'estimulante', name: 'Estimulante', kind: 'consumable', tier: 1, value: 8, heal: 10 },
-  { id: 'superestimulante', name: 'Superestimulante', kind: 'consumable', tier: 3, value: 25, heal: 25 },
+  { id: 'cuero', name: 'Armadura de cuero', kind: 'armor', tier: 1, value: 12, weight: 6, reduction: 2 },
+  { id: 'metal', name: 'Armadura de metal', kind: 'armor', tier: 2, value: 28, weight: 12, reduction: 4 },
+  { id: 'combate', name: 'Armadura de combate', kind: 'armor', tier: 3, value: 50, weight: 9, reduction: 6 },
 
-  { id: 'chatarra', name: 'Chatarra', kind: 'valuable', tier: 1, value: 3 },
-  { id: 'componentes', name: 'Componentes', kind: 'valuable', tier: 2, value: 15 },
-  { id: 'holodisco', name: 'Holodisco', kind: 'valuable', tier: 3, value: 40 },
+  { id: 'estimulante', name: 'Estimulante', kind: 'consumable', tier: 1, value: 8, weight: 0.2, heal: 10 },
+  { id: 'superestimulante', name: 'Superestimulante', kind: 'consumable', tier: 3, value: 25, weight: 0.3, heal: 25 },
+
+  { id: 'chatarra', name: 'Chatarra', kind: 'valuable', tier: 1, value: 3, weight: 2 },
+  { id: 'componentes', name: 'Componentes', kind: 'valuable', tier: 2, value: 15, weight: 1 },
+  { id: 'holodisco', name: 'Holodisco', kind: 'valuable', tier: 3, value: 40, weight: 0.1 },
 ];
 
 const POR_ID = new Map(ITEMS.map((item) => [item.id, item]));
@@ -110,6 +129,39 @@ export function armorReduction(id: string): number {
   const item = itemById(id);
   return item?.kind === 'armor' ? item.reduction : 0;
 }
+
+/**
+ * Cuánto se puede cargar, en kilos. Alcanza para un arma, una armadura
+ * pesada y algo de botín: con más, saquear dejaría de ser una decisión.
+ */
+export const CARGA_MAXIMA = 25;
+
+/**
+ * Lo que pesa una lista de objetos, en kilos. Se redondea a gramos: sumar
+ * pesos con decimales deja restos que harían fallar una comparación justa.
+ */
+export function weightOf(ids: Iterable<string>): number {
+  let total = 0;
+  for (const id of ids) total += itemById(id)?.weight ?? 0;
+  return Math.round(total * 1000) / 1000;
+}
+
+/** Si a lo que se lleva se le pueden sumar esos objetos sin pasarse de peso. */
+export function fits(carried: Iterable<string>, more: Iterable<string>): boolean {
+  return weightOf([...carried, ...more]) <= CARGA_MAXIMA;
+}
+
+/**
+ * Lo que se le manda al cliente para que sepa qué existe: el catálogo y el
+ * tope de carga, que es la otra regla que necesita para armar el equipo.
+ */
+export interface ItemsMessage {
+  items: readonly Item[];
+  /** Cuántos kilos se pueden llevar. */
+  maxCarry: number;
+}
+
+export const ITEMS_PAYLOAD: ItemsMessage = { items: ITEMS, maxCarry: CARGA_MAXIMA };
 
 /** Lo que vale una lista de objetos. Lo que no está en el catálogo no vale nada. */
 export function valueOf(ids: Iterable<string>): number {

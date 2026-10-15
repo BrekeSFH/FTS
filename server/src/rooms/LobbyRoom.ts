@@ -9,7 +9,7 @@
 import { Client, Room } from '@colyseus/core';
 import { currentStash, playerIdFromToken, type StashContents } from '../stash';
 import { DEFAULT_FACING, facingFromStep } from './direction';
-import { ITEMS } from './items';
+import { ITEMS_PAYLOAD } from './items';
 import { floorCells, generateMap, isBlocked, randomSeed, type GeneratedMap } from './map';
 import { LobbyState, MapSchema, Player, type LobbyStateType } from './state';
 import { SIGHT_RADIUS, visibleMask } from './vision';
@@ -124,7 +124,7 @@ export class LobbyRoom extends Room<LobbyRoomOptions> {
     // El alijo y el catálogo, a pedido: se mandan al entrar, pero pueden
     // llegar antes de que el cliente escuche, igual que la visión.
     this.onMessage(STASH_MESSAGE, (client) => this.sendStash(client));
-    this.onMessage(ITEMS_MESSAGE, (client) => client.send(ITEMS_MESSAGE, ITEMS));
+    this.onMessage(ITEMS_MESSAGE, (client) => client.send(ITEMS_MESSAGE, ITEMS_PAYLOAD));
   }
 
   /** De qué jugador es cada sesión, para leerle el alijo. */
@@ -157,7 +157,7 @@ export class LobbyRoom extends Room<LobbyRoomOptions> {
 
     const player = playerIdFromToken(options.token);
     if (player) this.duenos.set(client.sessionId, player);
-    client.send(ITEMS_MESSAGE, ITEMS);
+    client.send(ITEMS_MESSAGE, ITEMS_PAYLOAD);
     this.sendStash(client);
     this.sendVision(client);
   }

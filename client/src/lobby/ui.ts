@@ -13,6 +13,7 @@ import {
   onDied,
   onExtracted,
   onItems,
+  onNotice,
   onShot,
   onStash,
   onVision,
@@ -20,6 +21,7 @@ import {
   requestStash,
   requestVision,
   sendAttack,
+  sendDrop,
   sendEndTurn,
   sendEquip,
   sendUse,
@@ -34,7 +36,7 @@ import { floorView, ownFloor } from './floors';
 import { createFog, type Fog } from './fog';
 import { playerToken } from './identity';
 import { loadoutFrom, stashRows, valueOfItems, type StashContents } from './stash';
-import { ACTION_LABEL, inventoryRows, type InventoryAction } from './inventory';
+import { ACTION_LABEL, formatKg, inventoryRows, loadSummary, weightOfItems, type InventoryAction } from './inventory';
 import { playerAt, toWorld, type Origin } from './pointer';
 import { turnHud } from './hud';
 import { renderLobby, type PlacedTile, type WallSet } from './render';
@@ -55,6 +57,8 @@ export interface LobbyElements {
   endTurn?: HTMLButtonElement | null;
   /** Lista de lo que lleva encima, con sus botones. Solo se llena en la Vault. */
   inventory?: HTMLElement | null;
+  /** Línea con lo que pesa la mochila y la munición del arma. Solo en la Vault. */
+  load?: HTMLElement | null;
   /**
    * Panel del alijo: lo que hay guardado y qué llevar. Se llena al entrar al
    * lobby y queda a la vista al desconectarse, para elegir antes de bajar.
@@ -103,6 +107,8 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
   };
   /** El catálogo de objetos de la sala, por id. Lo manda el servidor. */
   let catalogo = new Map<string, CatalogItem>();
+  /** Cuántos kilos se pueden llevar. Lo manda el servidor con el catálogo. */
+  let cargaMaxima = 0;
   /** Lo último que se dibujó en la mochila, para no rehacerla en cada cuadro. */
   let mochilaDibujada = '';
   /** El alijo, tal como lo mandó el lobby la última vez. `null` si nunca llegó. */
@@ -126,10 +132,17 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     resumen.className = 'muted';
     const resumir = (): void => {
       const llevar = loadoutFrom(alijo ?? {}, seleccion);
+      const peso = weightOfItems(llevar, catalogo);
+      // El servidor rechaza igual al que se pasa; esto es para que se sepa
+      // antes de intentar.
+      const pasado = cargaMaxima > 0 && peso > cargaMaxima;
+      resumen.classList.toggle('error', pasado);
       resumen.textContent =
         llevar.length === 0
           ? 'No elegiste nada para llevar: entrás a la Vault con una pistola de emergencia prestada, que no vuelve con vos.'
-          : `Llevás ${llevar.length} ${llevar.length === 1 ? 'objeto' : 'objetos'} (valor ${valueOfItems(llevar, catalogo)}). Al entrar salen del alijo; si no volvés, se pierden.`;
+          : pasado
+            ? `Eso pesa ${formatKg(peso)} kg y se pueden cargar ${formatKg(cargaMaxima)}: sacá algo para poder entrar.`
+            : `Llevás ${llevar.length} ${llevar.length === 1 ? 'objeto' : 'objetos'} (valor ${valueOfItems(llevar, catalogo)}, ${formatKg(peso)} de ${formatKg(cargaMaxima)} kg). Al entrar salen del alijo; si no volvés, se pierden.`;
     };
 
     if (filas.length === 0) {
@@ -220,10 +233,15 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     const me = room?.state?.players?.get(room.sessionId);
     const filas = me?.items ? inventoryRows(me, catalogo) : [];
     const puede = turnHud(room?.state ?? null, me).canMove;
-    const clave = JSON.stringify([filas, puede]);
+    const carga = me?.items && cargaMaxima > 0 ? loadSummary(me, catalogo, cargaMaxima) : '';
+    const clave = JSON.stringify([filas, puede, carga]);
     if (clave === mochilaDibujada) return;
     mochilaDibujada = clave;
 
+    if (ui.load) {
+      ui.load.textContent = carga;
+      ui.load.hidden = carga.length === 0;
+    }
     ui.inventory.hidden = filas.length === 0;
     ui.inventory.replaceChildren(
       ...filas.map((fila) => {
@@ -236,12 +254,15 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
         detalle.className = 'muted';
         detalle.textContent = fila.detail;
         li.append(nombre, detalle);
-        if (fila.action) {
+        const acciones: InventoryAction[] = [...(fila.action ? [fila.action] : []), ...(fila.canDrop ? ['drop' as const] : [])];
+        for (const [n, accion] of acciones.entries()) {
           const boton = document.createElement('button');
           boton.type = 'button';
-          boton.textContent = ACTION_LABEL[fila.action];
+          boton.textContent = ACTION_LABEL[accion];
           boton.dataset.item = fila.id;
-          boton.dataset.action = fila.action;
+          boton.dataset.action = accion;
+          // Solo el primero se va a la derecha; el resto queda pegado.
+          if (n > 0) boton.classList.add('next');
           // Como las teclas: el servidor rechaza igual, esto es para que se
           // note por qué no pasa nada.
           boton.disabled = !puede;
@@ -321,6 +342,7 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     if (ui.room) ui.room.disabled = false;
     tileSeed = null;
     mochilaDibujada = '';
+    if (ui.load) ui.load.hidden = true;
     setStatus(reason, isError);
     actualizarTurno();
   };
@@ -399,8 +421,9 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
           const guardado = saved ? ' Quedó en tu alijo: entrá al lobby para verlo.' : '';
           despedida = `Saliste con vida: ${cuantos} ${cuantos === 1 ? 'objeto' : 'objetos'}, botín ${loot}.${guardado}`;
         });
-        onItems(joined, (items) => {
+        onItems(joined, ({ items, maxCarry }) => {
           catalogo = new Map(items.map((item) => [item.id, item]));
+          cargaMaxima = maxCarry;
           mochilaDibujada = '';
           dibujarAlijo();
           draw();
@@ -416,6 +439,7 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
           despedida = `Te mató ${by}.${loot > 0 ? ` Tu botín (${loot}) quedó donde caíste.` : ''}`;
         });
         onShot(joined, (shot) => setStatus(describeShot(shot, joined.sessionId)));
+        onNotice(joined, ({ text }) => setStatus(text));
         joined.onLeave((code) => {
           if (room !== joined) return;
           if (despedida !== null) {
@@ -466,6 +490,7 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     if (!room || !boton?.dataset.item) return;
     const accion = boton.dataset.action as InventoryAction;
     if (accion === 'use') sendUse(room, boton.dataset.item);
+    else if (accion === 'drop') sendDrop(room, boton.dataset.item);
     else sendEquip(room, boton.dataset.item);
   });
 

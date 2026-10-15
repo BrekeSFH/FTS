@@ -86,13 +86,16 @@
             <span id="lobby-turn" class="turn" role="status" hidden></span>
           </div>
           <canvas id="lobby-canvas"></canvas>
+          <p id="lobby-load" class="muted" hidden></p>
           <ul id="lobby-inventory" class="inventory" hidden></ul>
           <p class="hint">
             Flechas o WASD para moverte; Q, E, Z y C para las diagonales. En la Vault cada
             paso gasta un punto de acción y el turno se cierra solo al quedarte sin ellos.
             <kbd>F</kbd> abre un contenedor al lado tuyo por dos puntos y lo que tenga pasa a tu
             mochila, debajo del tablero: cambiar de arma o de armadura cuesta un punto y usar un
-            estimulante, dos. Las escaleras ▼ y ▲
+            estimulante, dos. Soltar algo cuesta uno y lo deja en el piso; la munición se suelta
+            toda junta. Se cargan hasta 25 kg, y cada disparo gasta una bala del tipo del arma,
+            menos con la pistola de emergencia. Las escaleras ▼ y ▲
             llevan de un piso a otro, y pisar una SALIDA te saca con el botín. Click sobre otro
             jugador o Saqueador para dispararle; cuántos puntos cuesta depende del arma. Si te
             matan, todo lo que llevabas queda donde caíste.
