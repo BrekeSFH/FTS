@@ -139,31 +139,77 @@ export function spriteAnimationNames(bytes: Uint8Array): string[] {
   return readSpriteAnimations(bytes).map((a) => a.name);
 }
 
+/** Las palabras de un nombre de animación, en minúsculas. */
+function palabras(name: string): string[] {
+  // Se compara por palabra entera para no confundir "Run" con "Brunswick".
+  return name.toLowerCase().split(/[^a-z]+/).filter(Boolean);
+}
+
+/** Si el nombre de una animacion la delata como un ciclo de desplazamiento. */
+function esDesplazamiento(name: string): boolean {
+  return palabras(name).some((palabra) => palabra === 'run' || palabra === 'walk');
+}
+
+/** Agachado o cuerpo a tierra: no es como se camina por defecto. */
+const esPostura = (name: string) => palabras(name).some((p) => p === 'crouch' || p === 'prone');
+
+/**
+ * Con qué arma está hecha una animación: lo que sigue a "walk" o "stand" en
+ * el nombre, como "pistol" en "LF Walk Pistol". Vacío si no dice.
+ */
+function armaDe(name: string): string {
+  const p = palabras(name);
+  const i = p.findIndex((x) => x === 'walk' || x === 'stand' || x === 'run');
+  return i >= 0 ? p.slice(i + 1).join(' ') : '';
+}
+
+/** El orden de preferencia de las armas: la pistola es lo que llevan los jugadores. */
+const ARMAS_PREFERIDAS = ['pistol', 'unarmed'];
+
+/** De varios índices, el primero cuya arma esté más arriba en la preferencia. */
+function porArma(indices: number[], nombres: string[], preferida: string[]): number {
+  for (const arma of preferida) {
+    const i = indices.find((n) => armaDe(nombres[n]) === arma);
+    if (i !== undefined) return i;
+  }
+  return indices[0];
+}
+
 /**
  * Animación con la que mostrar al personaje moviéndose.
  *
- * Se busca primero un ciclo de desplazamiento —en estos sprites se llama
- * "Run", no "Walk"— y se exige que cubra los ocho rumbos. Si no hay, cualquiera
+ * Se busca un ciclo de desplazamiento —"Walk" o "Run"— que cubra los ocho
+ * rumbos. Entre esos, de pie antes que agachado, y con pistola antes que con
+ * otra arma: es lo que llevan los jugadores. Si no hay ninguno, cualquiera
  * de ocho direcciones sirve para al menos girar.
  */
-/** Si el nombre de una animacion la delata como un ciclo de desplazamiento. */
-function esDesplazamiento(name: string): boolean {
-  // Se compara por palabra entera para no confundir "Run" con "Brunswick".
-  return name
-    .toLowerCase()
-    .split(/[^a-z]+/)
-    .some((palabra) => palabra === 'run' || palabra === 'walk');
-}
-
 export function pickDirectionalAnimation(bytes: Uint8Array): number {
   const animations = readSpriteAnimations(bytes);
-  const cubreLosOcho = (a: { directions: number }) => a.directions >= DIRECTIONS;
-  const caminando = animations.findIndex(
-    (a) => cubreLosOcho(a) && esDesplazamiento(a.name),
-  );
-  if (caminando >= 0) return caminando;
-  const cualquiera = animations.findIndex(cubreLosOcho);
-  return cualquiera >= 0 ? cualquiera : 0;
+  const nombres = animations.map((a) => a.name);
+  const ocho = animations.map((a, i) => (a.directions >= DIRECTIONS ? i : -1)).filter((i) => i >= 0);
+  const desplazamientos = ocho.filter((i) => esDesplazamiento(nombres[i]));
+  const dePie = desplazamientos.filter((i) => !esPostura(nombres[i]));
+  const caminando = dePie.filter((i) => palabras(nombres[i]).includes('walk'));
+  for (const grupo of [caminando, dePie, desplazamientos]) {
+    if (grupo.length > 0) return porArma(grupo, nombres, ARMAS_PREFERIDAS);
+  }
+  return ocho.length > 0 ? ocho[0] : 0;
+}
+
+/**
+ * Animación para cuando el personaje está quieto: de pie, de ocho rumbos y,
+ * si se puede, con la misma arma que la caminata, para que al frenar no
+ * cambie lo que tiene en la mano. `-1` si el sprite no tiene ninguna.
+ */
+export function pickStandAnimation(bytes: Uint8Array, walkIndex: number): number {
+  const animations = readSpriteAnimations(bytes);
+  const nombres = animations.map((a) => a.name);
+  const quietas = animations
+    .map((a, i) => (a.directions >= DIRECTIONS && palabras(a.name).includes('stand') && !esPostura(a.name) ? i : -1))
+    .filter((i) => i >= 0);
+  if (quietas.length === 0) return -1;
+  const arma = nombres[walkIndex] ? armaDe(nombres[walkIndex]) : '';
+  return porArma(quietas, nombres, [arma, ...ARMAS_PREFERIDAS].filter(Boolean));
 }
 
 /**

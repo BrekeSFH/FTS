@@ -10,7 +10,7 @@
  * y no se queja: en producción no existe, y el modelo BYOG exige que la
  * aplicación funcione igual sin ningún asset.
  */
-import { loadSpriteAnimation, pickDirectionalAnimation } from '../iso/spriteset';
+import { loadSpriteAnimation, pickDirectionalAnimation, pickStandAnimation } from '../iso/spriteset';
 import { loadTile } from '../iso/tileset';
 import { WALL_SUFFIXES, type WallSuffix } from '../iso/walls';
 import type { PlacedTile, WallSet } from '../lobby/render';
@@ -96,7 +96,12 @@ export async function aplicarAssetsDePrueba(lobby: LobbyHandle): Promise<AssetsA
 
   try {
     const bytes = await bytesDe('personaje.spr');
-    lobby.setCharacter(await loadSpriteAnimation('dev#personaje', bytes, pickDirectionalAnimation(bytes)));
+    const caminata = pickDirectionalAnimation(bytes);
+    const quieto = pickStandAnimation(bytes, caminata);
+    lobby.setCharacter(
+      await loadSpriteAnimation('dev#personaje', bytes, caminata),
+      quieto >= 0 ? await loadSpriteAnimation('dev#personaje', bytes, quieto) : null,
+    );
     aplicados.personaje = manifiesto['personaje.spr'];
   } catch (err) {
     console.warn('No se pudo aplicar el personaje de prueba', err);

@@ -15,7 +15,7 @@ import { isTile } from './sprites/tile';
 import { isZar } from './sprites/zar';
 import { aplicarAssetsDePrueba } from './dev/assetsDePrueba';
 import { setupLobby } from './lobby/ui';
-import { clearSpriteCache, loadSpriteAnimation, pickDirectionalAnimation } from './iso/spriteset';
+import { clearSpriteCache, loadSpriteAnimation, pickDirectionalAnimation, pickStandAnimation } from './iso/spriteset';
 import { FLOOR_TILE_HEIGHT, FLOOR_TILE_WIDTH, clearTileCache, loadTile } from './iso/tileset';
 import { WALL_SUFFIXES, siblingPath, splitOrientation, type WallSuffix } from './iso/walls';
 import { singleWall, type PlacedTile, type WallSet } from './lobby/render';
@@ -560,12 +560,12 @@ async function useAsCharacter(entry: BosEntry): Promise<void> {
     const bytes = await archive.readBytes(entry.path);
     // Se prefiere un ciclo de desplazamiento con los ocho rumbos: así el
     // personaje gira y camina.
-    const animacion = await loadSpriteAnimation(
-      cacheKey(archive, entry.path),
-      bytes,
-      pickDirectionalAnimation(bytes),
-    );
-    lobby.setCharacter(animacion);
+    const caminata = pickDirectionalAnimation(bytes);
+    const animacion = await loadSpriteAnimation(cacheKey(archive, entry.path), bytes, caminata);
+    // La de quieto es opcional: sin ella, quieto es el primer frame de caminar.
+    const indiceQuieto = pickStandAnimation(bytes, caminata);
+    const quieto = indiceQuieto >= 0 ? await loadSpriteAnimation(cacheKey(archive, entry.path), bytes, indiceQuieto) : null;
+    lobby.setCharacter(animacion, quieto);
     lobbySources.character = archive.name;
     setStatus(
       `Personaje del lobby: ${entry.path} — "${animacion.name}",` +

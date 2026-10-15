@@ -51,6 +51,7 @@ import { loadoutFrom, stashRows, valueOfItems, type StashContents } from './stas
 import { ACTION_LABEL, formatKg, inventoryRows, loadSummary, weightOfItems, type InventoryAction } from './inventory';
 import { playerAt, toWorld, type Origin } from './pointer';
 import { cellCenter } from '../iso/projection';
+import { PASO_MS, createMotion } from './motion';
 import { turnHud } from './hud';
 import { renderLobby, type PlacedTile, type WallSet } from './render';
 
@@ -59,6 +60,18 @@ import { renderLobby, type PlacedTile, type WallSet } from './render';
  * En otro monitor se escala sin deformarse.
  */
 export const PANTALLA = { width: 1920, height: 1080 } as const;
+
+/** Los escalones de zoom de la rueda, y con cuál se arranca. */
+export const ZOOMS: readonly number[] = [1, 1.5, 2, 2.5, 3];
+const ZOOM_INICIAL = 2;
+
+/**
+ * Cuánto dura cada frame de la caminata. Un ciclo de 12 frames recorre dos
+ * celdas, así que va atado a `PASO_MS`: si no, los pies patinan.
+ */
+const MS_POR_FRAME_CAMINANDO = (2 * PASO_MS) / 12;
+/** Cuánto dura cada frame de quieto. Despacio: es respirar, no moverse. */
+const MS_POR_FRAME_QUIETO = 160;
 
 export interface LobbyElements {
   connect: HTMLButtonElement;
@@ -113,7 +126,7 @@ export interface LobbyHandle {
   /** Cambia la pieza de esquina. `null` cae a dibujar las dos caras. */
   setCorner(corner: WallSet | null): void;
   /** Cambia la animación de los jugadores. `null` vuelve a los puntos. */
-  setCharacter(character: LoadedAnimation | null): void;
+  setCharacter(walk: LoadedAnimation | null, stand?: LoadedAnimation | null): void;
 }
 
 export function setupLobby(ui: LobbyElements): LobbyHandle {
@@ -122,6 +135,8 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
   let wall: WallSet | null = null;
   let corner: WallSet | null = null;
   let character: LoadedAnimation | null = null;
+  /** La animación de quieto. Sin ella, quieto es el primer frame de la caminata. */
+  let quieto: LoadedAnimation | null = null;
   /**
    * Lo que el jugador ve y lo que ya vio, una niebla por piso: todos tienen
    * el mismo ancho, y con una sola lo explorado arriba aparecería abajo. Se
@@ -260,13 +275,17 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
   let tileSeed: number | null = null;
 
   /**
-   * Cuándo arrancó el movimiento de cada jugador y dónde estaba.
-   *
-   * El estado sincronizado solo dice la celda; que alguien esté caminando se
-   * deduce de que esa celda haya cambiado hace poco. Alcanza para animar y no
-   * obliga al servidor a mandar nada más.
+   * El trayecto de cada uno entre la celda de antes y la de ahora. El estado
+   * solo dice la celda; el paso se dibuja acá, a lo largo de `PASO_MS`.
    */
-  const movimiento = new Map<string, { x: number; y: number; desde: number }>();
+  const movimiento = createMotion();
+
+  /**
+   * Cuánto se agranda el mundo. A tamaño original, en una pantalla de 1920
+   * los personajes quedan diminutos; el juego se jugaba en 640×480 u
+   * 800×600. Se cambia con la rueda del mouse.
+   */
+  let zoom = ZOOM_INICIAL;
 
   /** Para que un aviso nuevo no se borre con el plazo del anterior. */
   let plazoAviso: ReturnType<typeof setTimeout> | null = null;
@@ -284,8 +303,8 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     }, 5000);
   };
 
-  /** Si el tablero está en pantalla completa, que es cuando se juega como en el juego. */
-  const pantallaCompleta = (): boolean => document.fullscreenElement === ui.board;
+  /** A quiénes se está animando, para olvidar a los que se van. */
+  let idsAnimados = new Set<string>();
 
   const draw = (): void => {
     // `joinOrCreate` resuelve antes de que llegue el primer estado, así que
@@ -293,7 +312,13 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     // resuelve enseguida.
     if (!room?.state?.players) return;
     const fog = fogOf(ownFloor(room.state, room.sessionId));
-    const yo = room.state.players.get(room.sessionId);
+    const ahora = performance.now();
+    const presentes = new Set<string>();
+    room.state.players.forEach((p, id) => {
+      presentes.add(id);
+      movimiento.update(id, p.x, p.y, ahora);
+    });
+    const yo = movimiento.position(room.sessionId, ahora);
     origen = renderLobby(ui.canvas, floorView(room.state, room.sessionId, mapas), {
       ownSessionId: room.sessionId,
       floors,
@@ -304,10 +329,19 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
       vision: fog.empty ? null : fog,
       // En pantalla completa, la pantalla del juego: 1920×1080 a tamaño
       // original, siguiendo al personaje propio.
-      viewport: pantallaCompleta()
-        ? { width: PANTALLA.width, height: PANTALLA.height, focus: yo ? cellCenter(yo.x, yo.y) : null }
-        : null,
+      position: (_, id) => movimiento.position(id, ahora),
+      // Una cámara como la del juego, siguiendo al personaje propio a mitad
+      // de cada paso. En pantalla completa ocupa 1920×1080; el canvas dibuja
+      // menos píxeles según el zoom, y se agranda sin suavizar.
+      viewport: {
+        width: Math.round(PANTALLA.width / zoom),
+        height: Math.round(PANTALLA.height / zoom),
+        focus: yo ? cellCenter(yo.x, yo.y) : null,
+      },
     });
+    // Los que se fueron no tienen por qué seguir ocupando memoria.
+    for (const id of idsAnimados) if (!presentes.has(id)) movimiento.forget(id);
+    idsAnimados = presentes;
     actualizarTurno();
     actualizarMochila();
     actualizarComercio();
@@ -394,36 +428,41 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
   /** Si la sala elegida juega por turnos. */
   const salaPorTurnos = (): boolean => (ui.room?.value ?? LOBBY_ROOM) !== LOBBY_ROOM;
 
-  /** Cuánto se sigue animando después del último paso, en milisegundos. */
-  const VENTANA_MOVIMIENTO = 260;
-  /** Duración de cada frame de la animación. */
-  const MS_POR_FRAME = 90;
-
-  /** Elige el sprite de un jugador según hacia dónde mira y si viene caminando. */
+  /**
+   * Elige el sprite de un jugador: la caminata mientras va de una celda a la
+   * otra, con el ciclo corriendo de corrido, y la animación de quieto cuando
+   * se para. Siempre en el rumbo al que mira.
+   */
   const spriteFor = (player: LobbyPlayer, sessionId: string): PlacedTile | null => {
     if (!character) return null;
     const ahora = performance.now();
-    const previo = movimiento.get(sessionId);
-    if (!previo || previo.x !== player.x || previo.y !== player.y) {
-      // Si ya venía caminando se conserva el arranque, para que el ciclo no
-      // se reinicie en cada paso y la caminata se vea continua.
-      const seguia = previo !== undefined && ahora - previo.desde < VENTANA_MOVIMIENTO;
-      movimiento.set(sessionId, {
-        x: player.x,
-        y: player.y,
-        desde: seguia ? previo.desde : ahora,
-      });
-    }
-
-    const estado = movimiento.get(sessionId)!;
-    const caminando = ahora - estado.desde < VENTANA_MOVIMIENTO;
+    const pos = movimiento.position(sessionId, ahora);
+    const caminando = pos?.walking ?? false;
+    const animacion = caminando || !quieto ? character : quieto;
     // Si la animación no cubre los ocho rumbos se cae al primero, que es
     // preferible a mostrar una dirección equivocada.
-    const frames = character.images[player.facing] ?? character.images[0];
-    const frame = caminando ? Math.floor((ahora - estado.desde) / MS_POR_FRAME) % frames.length : 0;
+    const frames = animacion.images[player.facing] ?? animacion.images[0];
+    let frame = 0;
+    if (caminando && pos) frame = Math.floor((ahora - pos.walkStart) / MS_POR_FRAME_CAMINANDO) % frames.length;
+    else if (quieto) frame = Math.floor(ahora / MS_POR_FRAME_QUIETO) % frames.length;
     const sprite = frames[frame] ?? frames[0];
     return { bitmap: sprite.bitmap, anchorX: sprite.anchorX, anchorY: sprite.anchorY };
   };
+
+  // La rueda acerca y aleja, de a un escalón, sobre el tablero.
+  ui.canvas.addEventListener(
+    'wheel',
+    (event) => {
+      if (!room) return;
+      event.preventDefault();
+      const i = ZOOMS.indexOf(zoom);
+      const siguiente = ZOOMS[Math.max(0, Math.min(ZOOMS.length - 1, i + (event.deltaY < 0 ? 1 : -1)))];
+      if (siguiente === zoom) return;
+      zoom = siguiente;
+      draw();
+    },
+    { passive: false },
+  );
 
   const disconnect = (reason: string, isError = false): void => {
     room = null;
@@ -492,6 +531,8 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
 
         fogs = new Map();
         mapas = new Map();
+        // Otra sala, otra gente: lo que se venía animando no sigue.
+        movimiento.clear();
         onVision(joined, ({ width, cells, floor, map }) => {
           fogOf(floor ?? 0).update(cells, width);
           if (map !== undefined) mapas.set(floor ?? 0, map);
@@ -506,7 +547,7 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
         // nuevo: el frame depende del reloj.
         const animar = (): void => {
           if (room !== joined) return;
-          if (character) draw();
+          if (character || movimiento.moving(performance.now())) draw();
           requestAnimationFrame(animar);
         };
         requestAnimationFrame(animar);
@@ -628,9 +669,9 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
       corner = next;
       draw();
     },
-    setCharacter(next) {
+    setCharacter(next, stand = null) {
       character = next;
-      movimiento.clear();
+      quieto = next ? stand : null;
       draw();
     },
   };

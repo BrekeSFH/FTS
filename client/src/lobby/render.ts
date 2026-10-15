@@ -95,10 +95,23 @@ export interface RenderOptions {
    */
   vision?: VisionView | null;
   /**
+   * Dónde dibujar a cada uno, con decimales si está a mitad de un paso, y en
+   * qué celda ordenarlo. Sin esto se lo dibuja quieto en su celda.
+   */
+  position?: ((player: LobbyPlayer, sessionId: string) => PlayerPosition | null) | null;
+  /**
    * Una cámara de tamaño fijo, como la pantalla del juego. Sin esto el canvas
    * toma el tamaño del mapa entero y se ve todo de una vez.
    */
   viewport?: Viewport | null;
+}
+
+/** Dónde va un jugador: posición en la grilla y celda en la que se lo ordena. */
+export interface PlayerPosition {
+  x: number;
+  y: number;
+  cellX: number;
+  cellY: number;
 }
 
 /** Lo que encuadra la cámara: un rectángulo de tantos píxeles centrado en un punto. */
@@ -258,13 +271,14 @@ function drawHealth(context: CanvasRenderingContext2D, player: LobbyPlayer, x: n
 function drawPlayer(
   context: CanvasRenderingContext2D,
   player: LobbyPlayer,
+  donde: { x: number; y: number },
   own: boolean,
   sprite: PlacedTile | null,
 ): void {
-  const { x, y } = cellCenter(player.x, player.y);
+  const { x, y } = cellCenter(donde.x, donde.y);
 
   if (sprite) {
-    const pos = placeTile(player.x, player.y, sprite.anchorX, sprite.anchorY);
+    const pos = placeTile(donde.x, donde.y, sprite.anchorX, sprite.anchorY);
     // El propio se marca con un anillo en el piso, porque todos los sprites
     // son iguales mientras no haya uno por jugador.
     if (own) {
@@ -327,6 +341,7 @@ export function renderLobby(
     character = null,
     vision = null,
     viewport = null,
+    position = null,
   }: RenderOptions,
 ): Origin | null {
   const context = canvas.getContext('2d');
@@ -361,14 +376,17 @@ export function renderLobby(
   context.translate(-origen.minX, -origen.minY);
 
   // Un jugador puede estar en cualquier celda; se indexan para intercalarlos.
-  const jugadores: Array<{ player: LobbyPlayer; sessionId: string }> = [];
-  const porCelda = new Map<string, Array<{ player: LobbyPlayer; sessionId: string }>>();
+  type Ubicado = { player: LobbyPlayer; sessionId: string; pos: PlayerPosition };
+  const jugadores: Ubicado[] = [];
+  const porCelda = new Map<string, Ubicado[]>();
   state.players.forEach((player, sessionId) => {
-    jugadores.push({ player, sessionId });
-    const clave = `${player.x},${player.y}`;
+    const pos = position?.(player, sessionId) ?? { x: player.x, y: player.y, cellX: player.x, cellY: player.y };
+    const ubicado = { player, sessionId, pos };
+    jugadores.push(ubicado);
+    const clave = `${pos.cellX},${pos.cellY}`;
     const lista = porCelda.get(clave);
-    if (lista) lista.push({ player, sessionId });
-    else porCelda.set(clave, [{ player, sessionId }]);
+    if (lista) lista.push(ubicado);
+    else porCelda.set(clave, [ubicado]);
   });
 
   // Contenedores y salidas también van intercalados por celda: un personaje
@@ -429,8 +447,8 @@ export function renderLobby(
     // A nadie se lo dibuja en una celda que no se esté viendo: lo explorado es
     // el mapa que uno recuerda, no un rastreador de rivales.
     if (!visible) continue;
-    for (const { player, sessionId } of porCelda.get(`${cell.x},${cell.y}`) ?? []) {
-      drawPlayer(context, player, sessionId === ownSessionId, character ? character(player, sessionId) : null);
+    for (const { player, sessionId, pos } of porCelda.get(`${cell.x},${cell.y}`) ?? []) {
+      drawPlayer(context, player, pos, sessionId === ownSessionId, character ? character(player, sessionId) : null);
     }
   }
   return origen;

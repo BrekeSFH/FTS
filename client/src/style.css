@@ -169,7 +169,9 @@ pre {
   border: 1px solid var(--line);
   /* La grilla es pixel art: al escalar no debe interpolarse. */
   image-rendering: pixelated;
-  max-width: 100%;
+  /* Es una cámara de 16:9 que sigue al personaje: ocupa todo el ancho. */
+  width: 100%;
+  height: auto;
 }
 
 /* Barra de archivos .BOS abiertos. */
