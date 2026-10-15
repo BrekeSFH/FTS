@@ -13,7 +13,8 @@
  * persona.
  */
 import { STAIRS_DOWN, STAIRS_UP, createRandom, isBlocked, type Cell, type DungeonFloor } from './map';
-import { VALOR_BASE } from './loot';
+import { ITEMS, STARTING_WEAPON, tierForFloor } from './items';
+import { rollItems } from './loot';
 
 /** La party de los enemigos. No está entre las que puede pedir un jugador. */
 export const ENEMY_PARTY = 'Saqueadores';
@@ -27,8 +28,12 @@ export interface EnemySpawn extends Cell {
   id: string;
   floor: number;
   hp: number;
-  /** Lo que lleva encima y deja al morir. */
-  loot: number;
+  /** Arma equipada. También está en `items`. */
+  weapon: string;
+  /** Armadura equipada, o vacío. También está en `items`. */
+  armor: string;
+  /** Todo lo que lleva encima, que deja al morir. */
+  items: string[];
 }
 
 /** Vida de un enemigo del primer piso; cada piso suma `VIDA_POR_PISO`. */
@@ -63,12 +68,22 @@ export function placeEnemies(floors: readonly DungeonFloor[], seed: number): Ene
       }
       if (libres.length === 0) continue;
       const celda = libres[Math.floor(random() * libres.length)];
+      // El arma sale del nivel del piso, como el botín: en el primero, la
+      // pistola; más abajo, lo que se encuentra ahí. Del segundo piso para
+      // abajo llevan armadura.
+      const nivel = floor === 0 ? 0 : tierForFloor(floor, random());
+      const armas = ITEMS.filter((i) => i.kind === 'weapon' && i.tier === nivel);
+      const weapon = armas.length > 0 ? armas[Math.floor(random() * armas.length)].id : STARTING_WEAPON;
+      const armaduras = ITEMS.filter((i) => i.kind === 'armor' && i.tier <= floor);
+      const armor = floor > 0 && armaduras.length > 0 ? armaduras[Math.floor(random() * armaduras.length)].id : '';
       out.push({
         id: `${ENEMY_PREFIX}${out.length + 1}`,
         floor,
         ...celda,
         hp: VIDA_BASE + floor * VIDA_POR_PISO,
-        loot: Math.round((VALOR_BASE * (1 + floor)) / 2),
+        weapon,
+        armor,
+        items: [weapon, ...(armor ? [armor] : []), ...rollItems(floor, 1, random)],
       });
     }
   }

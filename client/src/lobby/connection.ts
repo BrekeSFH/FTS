@@ -62,7 +62,31 @@ export interface LobbyPlayer {
   hp?: number;
   /** Vida con la que entró. Solo en la Vault. */
   maxHp?: number;
+  /** Lo que lleva, como ids del catálogo. Solo en la Vault. */
+  items?: ArrayLike<string>;
+  /** Arma equipada. Solo en la Vault. */
+  weapon?: string;
+  /** Armadura equipada, o vacío. Solo en la Vault. */
+  armor?: string;
 }
+
+/**
+ * Un objeto del catálogo del servidor. Lo que existe lo decide el servidor;
+ * el cliente solo lo muestra.
+ */
+export interface CatalogItem {
+  id: string;
+  name: string;
+  kind: 'weapon' | 'armor' | 'consumable' | 'valuable';
+  value: number;
+  tier: number;
+  weapon?: { damageMin: number; damageMax: number; ap: number; range: number; accuracy: number };
+  reduction?: number;
+  heal?: number;
+}
+
+/** Mensaje con el catálogo de objetos. Llega al entrar y se puede pedir. */
+export const ITEMS_MESSAGE = 'items';
 
 /** Mensaje con el resultado de un disparo, para el que tira y el que recibe. */
 export const SHOT_MESSAGE = 'shot';
@@ -111,6 +135,8 @@ export const EXTRACTED_MESSAGE = 'extracted';
 
 export interface ExtractedMessage {
   loot: number;
+  /** Lo que se llevó, como ids del catálogo. */
+  items?: string[];
 }
 
 /**
@@ -214,6 +240,26 @@ export function describeShot(shot: ShotMessage, ownSessionId: string): string {
   }
   if (!shot.hit) return `${shot.fromName} te disparó y falló.`;
   return `${shot.fromName} te dio: ${shot.damage} de daño.`;
+}
+
+/** Equipa un arma o una armadura, o se saca la armadura puesta. */
+export function sendEquip(room: LobbyRoom, item: string): void {
+  room.send('equip', { item });
+}
+
+/** Usa un consumible. */
+export function sendUse(room: LobbyRoom, item: string): void {
+  room.send('use', { item });
+}
+
+/** Queda avisado cuando llega el catálogo de objetos. */
+export function onItems(room: LobbyRoom, handler: (items: CatalogItem[]) => void): void {
+  room.onMessage<CatalogItem[]>(ITEMS_MESSAGE, handler);
+}
+
+/** Pide el catálogo, por si el que se mandó al entrar llegó antes del handler. */
+export function requestItems(room: LobbyRoom): void {
+  room.send(ITEMS_MESSAGE);
 }
 
 /** Abre el contenedor que haya al alcance. Solo lo escucha la Vault. */

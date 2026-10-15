@@ -12,19 +12,25 @@ import {
   isLootKey,
   onDied,
   onExtracted,
+  onItems,
   onShot,
   onVision,
+  requestItems,
   requestVision,
   sendAttack,
   sendEndTurn,
+  sendEquip,
+  sendUse,
   sendLoot,
   sendStep,
   stepForKey,
+  type CatalogItem,
   type LobbyPlayer,
   type LobbyRoom,
 } from './connection';
 import { floorView, ownFloor } from './floors';
 import { createFog, type Fog } from './fog';
+import { ACTION_LABEL, inventoryRows, type InventoryAction } from './inventory';
 import { playerAt, toWorld, type Origin } from './pointer';
 import { turnHud } from './hud';
 import { renderLobby, type PlacedTile, type WallSet } from './render';
@@ -43,6 +49,8 @@ export interface LobbyElements {
   turn?: HTMLElement | null;
   /** Botón para cerrar el turno propio. Solo sirve en la Vault. */
   endTurn?: HTMLButtonElement | null;
+  /** Lista de lo que lleva encima, con sus botones. Solo se llena en la Vault. */
+  inventory?: HTMLElement | null;
   /**
    * Aviso de qué semilla de tiles usa la sala, al conectarse y si cambia.
    *
@@ -84,6 +92,11 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     if (!fog) fogs.set(floor, (fog = createFog()));
     return fog;
   };
+  /** El catálogo de objetos de la sala, por id. Lo manda el servidor. */
+  let catalogo = new Map<string, CatalogItem>();
+  /** Lo último que se dibujó en la mochila, para no rehacerla en cada cuadro. */
+  let mochilaDibujada = '';
+
   /** Dónde quedó la grilla en el último dibujo, para ubicar los clicks. */
   let origen: Origin | null = null;
   /** Última semilla avisada, para no rearmar el tablero en cada parche. */
@@ -119,7 +132,50 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
       vision: fog.empty ? null : fog,
     });
     actualizarTurno();
+    actualizarMochila();
     avisarSemilla();
+  };
+
+  /**
+   * La lista de la mochila. Se rehace solo si cambió algo: `draw` corre en
+   * cada cuadro mientras alguien camina, y rehacer botones bajo el puntero
+   * se comería los clicks.
+   */
+  const actualizarMochila = (): void => {
+    if (!ui.inventory) return;
+    const me = room?.state?.players?.get(room.sessionId);
+    const filas = me?.items ? inventoryRows(me, catalogo) : [];
+    const puede = turnHud(room?.state ?? null, me).canMove;
+    const clave = JSON.stringify([filas, puede]);
+    if (clave === mochilaDibujada) return;
+    mochilaDibujada = clave;
+
+    ui.inventory.hidden = filas.length === 0;
+    ui.inventory.replaceChildren(
+      ...filas.map((fila) => {
+        const li = document.createElement('li');
+        li.classList.toggle('equipped', fila.equipped);
+        const nombre = document.createElement('span');
+        nombre.className = 'item-name';
+        nombre.textContent = `${fila.name}${fila.count > 1 ? ` ×${fila.count}` : ''}${fila.equipped ? ' (puesto)' : ''}`;
+        const detalle = document.createElement('span');
+        detalle.className = 'muted';
+        detalle.textContent = fila.detail;
+        li.append(nombre, detalle);
+        if (fila.action) {
+          const boton = document.createElement('button');
+          boton.type = 'button';
+          boton.textContent = ACTION_LABEL[fila.action];
+          boton.dataset.item = fila.id;
+          boton.dataset.action = fila.action;
+          // Como las teclas: el servidor rechaza igual, esto es para que se
+          // note por qué no pasa nada.
+          boton.disabled = !puede;
+          li.append(boton);
+        }
+        return li;
+      }),
+    );
   };
 
   /**
@@ -190,6 +246,7 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     ui.connect.textContent = 'Conectar';
     if (ui.room) ui.room.disabled = false;
     tileSeed = null;
+    mochilaDibujada = '';
     setStatus(reason, isError);
     actualizarTurno();
   };
@@ -254,9 +311,17 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
         // Salir por una salida también corta la conexión; el aviso llega
         // antes, y es lo que tiene que quedar a la vista.
         let despedida: string | null = null;
-        onExtracted(joined, ({ loot }) => {
-          despedida = `Saliste con vida. Botín: ${loot}.`;
+        onExtracted(joined, ({ loot, items }) => {
+          const cuantos = items?.length ?? 0;
+          despedida = `Saliste con vida: ${cuantos} ${cuantos === 1 ? 'objeto' : 'objetos'}, botín ${loot}.`;
         });
+        onItems(joined, (items) => {
+          catalogo = new Map(items.map((item) => [item.id, item]));
+          mochilaDibujada = '';
+          draw();
+        });
+        // El servidor lo manda al entrar, pero pudo salir antes del handler.
+        if (salaPorTurnos()) requestItems(joined);
         onDied(joined, ({ loot, by }) => {
           despedida = `Te mató ${by}.${loot > 0 ? ` Tu botín (${loot}) quedó donde caíste.` : ''}`;
         });
@@ -303,6 +368,15 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     const punto = toWorld(event.offsetX, event.offsetY, ui.canvas, origen);
     const blanco = playerAt(floorView(room.state, room.sessionId), punto, room.sessionId);
     if (blanco) sendAttack(room, blanco.sessionId);
+  });
+
+  // Un solo handler para toda la lista: los botones se rehacen seguido.
+  ui.inventory?.addEventListener('click', (event) => {
+    const boton = (event.target as HTMLElement).closest('button');
+    if (!room || !boton?.dataset.item) return;
+    const accion = boton.dataset.action as InventoryAction;
+    if (accion === 'use') sendUse(room, boton.dataset.item);
+    else sendEquip(room, boton.dataset.item);
   });
 
   ui.endTurn?.addEventListener('click', () => {

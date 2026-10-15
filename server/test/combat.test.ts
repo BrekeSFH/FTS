@@ -44,10 +44,33 @@ describe('hitChance', () => {
   });
 });
 
+describe('hitChance con puntería', () => {
+  it('la puntería del arma suma, sin pasar del máximo', () => {
+    expect(hitChance(en(0, 0), en(6, 0), 15)).toBe(hitChance(en(0, 0), en(6, 0)) + 15);
+    expect(hitChance(en(0, 0), en(1, 0), 15)).toBe(95);
+    expect(hitChance(en(0, 0), en(19, 0), -50)).toBe(10);
+  });
+});
+
+describe('canShoot con el alcance del arma', () => {
+  it('un arma corta no llega tan lejos como la vista', () => {
+    expect(canShoot(abierto, en(0, 0), en(5, 0), 5)).toBe(true);
+    expect(canShoot(abierto, en(0, 0), en(6, 0), 5)).toBe(false);
+  });
+
+  it('y ninguna llega más allá de la vista', () => {
+    expect(canShoot(abierto, en(0, 0), en(0, ALCANCE + 1), 99)).toBe(false);
+  });
+});
+
 describe('resolveShot', () => {
   it('impacta si la tirada no supera la probabilidad', () => {
-    const chance = hitChance(en(0, 0), en(3, 0));
-    expect(resolveShot(en(0, 0), en(3, 0), chance, 8)).toEqual({ hit: true, damage: 8 });
-    expect(resolveShot(en(0, 0), en(3, 0), chance + 1, 8)).toEqual({ hit: false, damage: 0 });
+    expect(resolveShot(80, 80, 8)).toEqual({ hit: true, damage: 8 });
+    expect(resolveShot(80, 81, 8)).toEqual({ hit: false, damage: 0 });
+  });
+
+  it('la armadura resta, pero un impacto hace al menos 1', () => {
+    expect(resolveShot(80, 10, 8, 3)).toEqual({ hit: true, damage: 5 });
+    expect(resolveShot(80, 10, 4, 6)).toEqual({ hit: true, damage: 1 });
   });
 });

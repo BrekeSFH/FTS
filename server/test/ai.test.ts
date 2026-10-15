@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ENEMY_PARTY, ENEMY_PREFIX, esEnemigo, nextStep, placeEnemies } from '../src/rooms/ai';
+import { itemById, valueOf } from '../src/rooms/items';
 import { FLOOR, generateDungeon, type DungeonFloor } from '../src/rooms/map';
 
 /** Un piso a partir de filas dibujadas, sin salas ni escaleras declaradas. */
@@ -44,7 +45,18 @@ describe('placeEnemies', () => {
     const enemigos = placeEnemies(pisos, 7);
     const de = (f: number) => enemigos.find((e) => e.floor === f)!;
     expect(de(2).hp).toBeGreaterThan(de(0).hp);
-    expect(de(2).loot).toBeGreaterThan(de(0).loot);
+    expect(valueOf(de(2).items)).toBeGreaterThan(valueOf(de(0).items));
+  });
+
+  it('llevan equipada un arma y, si tienen, una armadura que está en su mochila', () => {
+    for (const e of placeEnemies(pisos, 7)) {
+      expect(itemById(e.weapon)?.kind, e.id).toBe('weapon');
+      expect(e.items).toContain(e.weapon);
+      if (e.armor) {
+        expect(itemById(e.armor)?.kind).toBe('armor');
+        expect(e.items).toContain(e.armor);
+      }
+    }
   });
 
   it('se reconocen por el identificador', () => {

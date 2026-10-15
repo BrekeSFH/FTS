@@ -11,7 +11,8 @@
  */
 import { Client, Room } from '@colyseus/core';
 import { ENEMY_PARTY, esEnemigo, nextStep, placeEnemies } from './ai';
-import { AP_DISPARO, DANO_MAXIMO, DANO_MINIMO, HP_MAX, canShoot, hitChance, resolveShot } from './combat';
+import { HP_MAX, canShoot, hitChance, resolveShot } from './combat';
+import { ITEMS, STARTING_WEAPON, armorReduction, itemById, valueOf, weaponStats } from './items';
 import { whoCanAct, type Combatant as Luchador } from './contact';
 import { DEFAULT_FACING, facingFromStep } from './direction';
 import {
@@ -80,9 +81,27 @@ export const AP_SAQUEO = 2;
 /** Mensaje con el que se avisa a alguien que salió de la instancia. */
 export const EXTRACTED_MESSAGE = 'extracted';
 
+/**
+ * Mensaje con el catálogo de objetos, que se manda al entrar. El cliente no
+ * tiene uno propio: lo que existe lo decide el servidor.
+ */
+export const ITEMS_MESSAGE = 'items';
+
+/** Cuesta cambiar de arma o de armadura. Poco, pero no es gratis en combate. */
+export const AP_EQUIPAR = 1;
+/** Cuesta usar un consumible. */
+export const AP_USAR = 2;
+
+export interface ItemMessage {
+  /** Id del catálogo de un objeto que se lleva encima. */
+  item: string;
+}
+
 export interface ExtractedMessage {
   /** El valor de lo que se llevó. */
   loot: number;
+  /** Lo que se llevó, como ids del catálogo. */
+  items: string[];
 }
 
 /** Mensaje con el resultado de un disparo, para el que tira y el que recibe. */
@@ -123,6 +142,8 @@ export interface Extraction {
   name: string;
   party: string;
   loot: number;
+  /** Lo que llevaba, como ids del catálogo. */
+  items: string[];
 }
 
 /** Mismo mensaje y mismo formato que el lobby; ver `LobbyRoom`. */
@@ -258,7 +279,10 @@ export class VaultRoom extends Room<VaultRoomOptions> {
             ap: AP_POR_TURNO,
             done: false,
             active: false,
-            loot: e.loot,
+            loot: valueOf(e.items),
+            items: e.items,
+            weapon: e.weapon,
+            armor: e.armor,
             hp: e.hp,
             maxHp: e.hp,
           }),
@@ -268,9 +292,9 @@ export class VaultRoom extends Room<VaultRoomOptions> {
 
     this.onMessage('move', (client, message: MoveMessage) => {
       if (this.tryMove(client.sessionId, message)) {
-        const loot = this.extractIfOnExit(client.sessionId);
-        if (loot !== null) {
-          client.send(EXTRACTED_MESSAGE, { loot } satisfies ExtractedMessage);
+        const salida = this.extractIfOnExit(client.sessionId);
+        if (salida !== null) {
+          client.send(EXTRACTED_MESSAGE, { loot: salida.loot, items: salida.items } satisfies ExtractedMessage);
           client.leave();
         } else {
           this.sendVision(client);
@@ -286,6 +310,16 @@ export class VaultRoom extends Room<VaultRoomOptions> {
       this.publish();
     });
 
+    this.onMessage('equip', (client, message: ItemMessage) => {
+      this.tryEquip(client.sessionId, typeof message?.item === 'string' ? message.item : '');
+      this.publish();
+    });
+
+    this.onMessage('use', (client, message: ItemMessage) => {
+      this.tryUse(client.sessionId, typeof message?.item === 'string' ? message.item : '');
+      this.publish();
+    });
+
     this.onMessage('loot', (client) => {
       this.tryLoot(client.sessionId);
       this.publish();
@@ -297,6 +331,9 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     });
 
     this.onMessage(VISION_MESSAGE, (client) => this.sendVision(client));
+    // Se manda al entrar, pero como con la visión, el cliente puede no estar
+    // escuchando todavía; puede pedirlo.
+    this.onMessage(ITEMS_MESSAGE, (client) => client.send(ITEMS_MESSAGE, ITEMS));
 
     this.setSimulationInterval(() => {
       if (!this.turns) return;
@@ -327,7 +364,11 @@ export class VaultRoom extends Room<VaultRoomOptions> {
         ap: AP_POR_TURNO,
         done: false,
         active: false,
-        loot: 0,
+        // Equipo inicial, hasta que exista el alijo del que sacarlo.
+        loot: valueOf([STARTING_WEAPON]),
+        items: [STARTING_WEAPON],
+        weapon: STARTING_WEAPON,
+        armor: '',
         hp: HP_MAX,
         maxHp: HP_MAX,
       }),
@@ -340,6 +381,7 @@ export class VaultRoom extends Room<VaultRoomOptions> {
         // hay ronda, y sin ronda la IA no tiene cuándo jugar.
         startInstance([...this.enemigos(), client.sessionId], TURNO_MS, now);
 
+    client.send(ITEMS_MESSAGE, ITEMS);
     this.publish();
     this.sendVision(client);
   }
@@ -380,16 +422,17 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     const blanco = this.state.players.get(targetId);
     if (!tirador || !blanco || sessionId === targetId) return null;
     if (!this.activos().has(sessionId)) return null;
-    if (tirador.ap < AP_DISPARO) return null;
-    if (!canShoot(this.mapOf(tirador.floor), tirador, blanco)) return null;
+    const arma = weaponStats(tirador.weapon);
+    if (tirador.ap < arma.ap) return null;
+    if (!canShoot(this.mapOf(tirador.floor), tirador, blanco, arma.range)) return null;
 
     const facing = facingFromStep(Math.sign(blanco.x - tirador.x), Math.sign(blanco.y - tirador.y));
     if (facing !== null) tirador.facing = facing;
 
-    const chance = hitChance(tirador, blanco);
-    const dano = DANO_MINIMO + this.tirar(DANO_MAXIMO - DANO_MINIMO + 1) - 1;
-    const { hit, damage } = resolveShot(tirador, blanco, this.tirar(100), dano);
-    tirador.ap -= AP_DISPARO;
+    const chance = hitChance(tirador, blanco, arma.accuracy);
+    const dano = arma.damageMin + this.tirar(arma.damageMax - arma.damageMin + 1) - 1;
+    const { hit, damage } = resolveShot(chance, this.tirar(100), dano, armorReduction(blanco.armor));
+    tirador.ap -= arma.ap;
 
     const resultado: ShotMessage = {
       from: sessionId,
@@ -421,11 +464,12 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     const muerto = this.state.players.get(sessionId);
     if (!muerto) return;
     const { name, party, loot, floor, x, y } = muerto;
-    if (!esEnemigo(sessionId)) this.fallen.push({ name, party, loot });
+    const items = [...muerto.items];
+    if (!esEnemigo(sessionId)) this.fallen.push({ name, party, loot, items });
     this.botinPerdido.set(sessionId, loot);
     this.rastro.delete(sessionId);
-    if (loot > 0) {
-      this.caches.push({ floor, x, y, value: loot });
+    if (items.length > 0) {
+      this.caches.push({ floor, x, y, items });
       this.state.caches.push(new LootCache({ floor, x, y, looted: false }));
     }
     this.state.players.delete(sessionId);
@@ -578,14 +622,14 @@ export class VaultRoom extends Room<VaultRoomOptions> {
 
       const blanco = this.humanos()
         .map((h) => ({ h, c: this.state.players.get(h)! }))
-        .filter(({ c }) => canShoot(map, yo, c))
+        .filter(({ c }) => canShoot(map, yo, c, weaponStats(yo.weapon).range))
         .sort((a, b) => Math.hypot(a.c.x - yo.x, a.c.y - yo.y) - Math.hypot(b.c.x - yo.x, b.c.y - yo.y))[0];
 
       if (blanco) {
         this.rastro.set(id, { x: blanco.c.x, y: blanco.c.y });
         // Sin acción para un disparo, se queda: acercarse a alguien que ya
         // tiene a tiro solo lo expondría más.
-        if (yo.ap < AP_DISPARO) return;
+        if (yo.ap < weaponStats(yo.weapon).ap) return;
         const resultado = this.tryAttack(id, blanco.h);
         if (!resultado) return;
         this.announceShot(resultado);
@@ -632,7 +676,7 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     if (i < 0) return false;
 
     this.state.caches[i].looted = true;
-    combatant.loot += this.caches[i].value;
+    this.give(combatant, this.caches[i].items);
     combatant.ap -= AP_SAQUEO;
     if (combatant.ap === 0) this.endTurn(sessionId);
     return true;
@@ -645,7 +689,7 @@ export class VaultRoom extends Room<VaultRoomOptions> {
    * borra del estado y del reloj en el acto y no al cortarse la conexión:
    * mientras tanto podría seguir moviendo, y el que salió ya no está.
    */
-  extractIfOnExit(sessionId: string): number | null {
+  extractIfOnExit(sessionId: string): { loot: number; items: string[] } | null {
     const combatant = this.state.players.get(sessionId);
     if (!combatant) return null;
     const enSalida = this.state.exits.some(
@@ -654,10 +698,64 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     if (!enSalida) return null;
 
     const { name, party, loot } = combatant;
-    this.extracted.push({ name, party, loot });
+    const items = [...combatant.items];
+    this.extracted.push({ name, party, loot, items });
     this.state.players.delete(sessionId);
     if (this.turns) this.turns = leave(this.turns, sessionId, Date.now());
-    return loot;
+    return { loot, items };
+  }
+
+  /** Le suma objetos a alguien y recalcula lo que vale lo que lleva. */
+  private give(combatant: CombatantType, items: readonly string[]): void {
+    for (const id of items) combatant.items.push(id);
+    combatant.loot = valueOf(combatant.items);
+  }
+
+  /** Si alguien puede gastar acción ahora, y le alcanza. */
+  private puedeGastar(sessionId: string, ap: number): CombatantType | null {
+    const combatant = this.state.players.get(sessionId);
+    if (!combatant || !this.activos().has(sessionId) || combatant.ap < ap) return null;
+    return combatant;
+  }
+
+  /**
+   * Equipa un arma o una armadura que lleva encima. Equipar la armadura que
+   * ya tiene puesta se la saca, para poder volver a ir sin ella.
+   */
+  tryEquip(sessionId: string, itemId: string): boolean {
+    const item = itemById(itemId);
+    if (!item || (item.kind !== 'weapon' && item.kind !== 'armor')) return false;
+    const combatant = this.puedeGastar(sessionId, AP_EQUIPAR);
+    if (!combatant || !combatant.items.includes(itemId)) return false;
+
+    if (item.kind === 'weapon') {
+      if (combatant.weapon === itemId) return false;
+      combatant.weapon = itemId;
+    } else {
+      combatant.armor = combatant.armor === itemId ? '' : itemId;
+    }
+    combatant.ap -= AP_EQUIPAR;
+    if (combatant.ap === 0) this.endTurn(sessionId);
+    return true;
+  }
+
+  /** Usa un consumible: lo gasta y aplica su efecto. */
+  tryUse(sessionId: string, itemId: string): boolean {
+    const item = itemById(itemId);
+    if (!item || item.kind !== 'consumable') return false;
+    const combatant = this.puedeGastar(sessionId, AP_USAR);
+    if (!combatant) return false;
+    const i = combatant.items.indexOf(itemId);
+    if (i < 0) return false;
+    // Curarse con la vida entera no sirve de nada, y gastaría el objeto.
+    if (combatant.hp >= combatant.maxHp) return false;
+
+    combatant.items.splice(i, 1);
+    combatant.loot = valueOf(combatant.items);
+    combatant.hp = Math.min(combatant.maxHp, combatant.hp + item.heal);
+    combatant.ap -= AP_USAR;
+    if (combatant.ap === 0) this.endTurn(sessionId);
+    return true;
   }
 
   /** Cierra el turno de alguien, si es suyo para cerrar. */

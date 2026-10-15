@@ -12,14 +12,18 @@ import { VAULT_ROOM, createServer } from '../src/createServer';
 import { FLOOR, isBlocked } from '../src/rooms/map';
 import { SIGHT_RADIUS, visibleMask } from '../src/rooms/vision';
 import { ENEMY_PARTY } from '../src/rooms/ai';
-import { AP_DISPARO, HP_MAX } from '../src/rooms/combat';
+import { HP_MAX } from '../src/rooms/combat';
+import { ITEMS, STARTING_WEAPON, valueOf, weaponStats } from '../src/rooms/items';
 import { PRIMERA_SALIDA, exitAt } from '../src/rooms/loot';
 import {
   AP_POR_TURNO,
+  AP_EQUIPAR,
   AP_SAQUEO,
+  AP_USAR,
   DIED_MESSAGE,
   type DiedMessage,
   EXTRACTED_MESSAGE,
+  ITEMS_MESSAGE,
   type ExtractedMessage,
   PARTIES,
   SHOT_MESSAGE,
@@ -467,11 +471,13 @@ describe('saqueo y extracción', () => {
     c.y = cache.y;
 
     expect(room.tryLoot(client.sessionId)).toBe(true);
-    expect(c.loot).toBe(cache.value);
+    const esperado = [STARTING_WEAPON, ...cache.items];
+    expect([...c.items]).toEqual(esperado);
+    expect(c.loot).toBe(valueOf(esperado));
     expect(c.ap).toBe(AP_POR_TURNO - AP_SAQUEO);
     expect(room.state.caches[0].looted).toBe(true);
     expect(room.tryLoot(client.sessionId), 'ya está vacío').toBe(false);
-    expect(c.loot).toBe(cache.value);
+    expect([...c.items]).toEqual(esperado);
   });
 
   it('no se saquea de lejos, desde otro piso ni sin acción', async () => {
@@ -541,14 +547,17 @@ describe('saqueo y extracción', () => {
     c.floor = salida.floor;
     c.x = salida.x - paso.dx;
     c.y = salida.y - paso.dy;
-    c.loot = 37;
+    c.items.push('holodisco');
+    c.loot = valueOf(c.items);
+    const loot = c.loot;
 
     client.send('move', paso);
     await new Promise<void>((resolve) => client.onLeave(() => resolve()));
 
-    expect(avisado).toEqual({ loot: 37 });
+    const items = [STARTING_WEAPON, 'holodisco'];
+    expect(avisado).toEqual({ loot, items });
     expect(room.state.players.has(client.sessionId)).toBe(false);
-    expect(room.extracted).toEqual([{ name: c.name, party: c.party, loot: 37 }]);
+    expect(room.extracted).toEqual([{ name: c.name, party: c.party, loot, items }]);
   });
 
   it('quien se va sin extraer no se lleva nada', async () => {
@@ -602,7 +611,7 @@ describe('disparos y muerte', () => {
     const r = room.tryAttack(tira.sessionId, recibe.sessionId)!;
     expect(r).not.toBeNull();
     expect(r.chance).toBe(95);
-    expect(tirador.ap).toBe(AP_POR_TURNO - AP_DISPARO);
+    expect(tirador.ap).toBe(AP_POR_TURNO - weaponStats(STARTING_WEAPON).ap);
     expect(blanco.hp).toBe(HP_MAX - r.damage);
     if (r.hit) expect(r.damage).toBeGreaterThan(0);
     else expect(r.damage).toBe(0);
@@ -615,7 +624,7 @@ describe('disparos y muerte', () => {
     expect(room.tryAttack(tira.sessionId, tira.sessionId), 'a sí mismo').toBeNull();
 
     const tirador = room.state.players.get(tira.sessionId)!;
-    tirador.ap = AP_DISPARO - 1;
+    tirador.ap = weaponStats(STARTING_WEAPON).ap - 1;
     expect(room.tryAttack(tira.sessionId, recibe.sessionId), 'sin acción').toBeNull();
 
     tirador.ap = AP_POR_TURNO;
@@ -649,7 +658,9 @@ describe('disparos y muerte', () => {
     const tirador = room.state.players.get(tira.sessionId)!;
     const { x, y, name } = blanco;
     blanco.hp = 1;
-    blanco.loot = 25;
+    blanco.items.push('componentes');
+    blanco.loot = valueOf(blanco.items);
+    const loot = blanco.loot;
     const contenedores = room.caches.length;
 
     // A quemarropa pega el 95 %: unos pocos intentos alcanzan.
@@ -660,19 +671,22 @@ describe('disparos y muerte', () => {
     }
     await seFue;
 
-    expect(avisado).toEqual({ loot: 25, by: tirador.name });
+    expect(avisado).toEqual({ loot, by: tirador.name });
     expect(room.state.players.has(recibe.sessionId)).toBe(false);
-    expect(room.fallen).toEqual([expect.objectContaining({ name, loot: 25 })]);
+    expect(room.fallen).toEqual([expect.objectContaining({ name, loot })]);
     expect(room.caches).toHaveLength(contenedores + 1);
-    expect(room.caches[contenedores]).toEqual({ floor: 0, x, y, value: 25 });
+    // Deja todo, también el arma con la que entró.
+    expect(room.caches[contenedores]).toEqual({ floor: 0, x, y, items: [STARTING_WEAPON, 'componentes'] });
     expect(room.state.caches[contenedores].looted).toBe(false);
   });
 
-  it('quien muere sin botín no deja contenedor', async () => {
+  it('quien muere sin nada encima no deja contenedor', async () => {
     const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const { tira, recibe } = await duelo(room);
     const tirador = room.state.players.get(tira.sessionId)!;
-    room.state.players.get(recibe.sessionId)!.hp = 1;
+    const blanco = room.state.players.get(recibe.sessionId)!;
+    blanco.hp = 1;
+    blanco.items.clear();
     const contenedores = room.caches.length;
     for (let i = 0; i < 20 && room.state.players.has(recibe.sessionId); i++) {
       tirador.ap = AP_POR_TURNO;
@@ -742,16 +756,19 @@ describe('los enemigos', () => {
 
     rondaSiguiente(room);
     const e = room.state.players.get(enemigo)!;
-    expect(e.ap, 'gastó todo en dos disparos').toBe(AP_POR_TURNO - 2 * AP_DISPARO);
+    // Dispara todo lo que su arma le deja con los puntos del turno.
+    const costo = weaponStats(e.weapon).ap;
+    const porRonda = Math.floor(AP_POR_TURNO / costo);
+    expect(e.ap, 'gastó lo que le alcanzaba').toBe(AP_POR_TURNO - porRonda * costo);
     const tras1 = yo.hp;
 
     // La segunda ronda prueba que la acción se repone antes de que juegue.
     rondaSiguiente(room);
-    expect(e.ap).toBe(AP_POR_TURNO - 2 * AP_DISPARO);
+    expect(e.ap).toBe(AP_POR_TURNO - porRonda * costo);
     expect(yo.hp).toBeLessThan(250);
     expect(yo.hp).toBeLessThanOrEqual(tras1);
     await room.waitForNextPatch();
-    expect(disparos).toBe(4);
+    expect(disparos).toBe(2 * porRonda);
   });
 
   it('va a buscar a quien perdió de vista', async () => {
@@ -778,7 +795,8 @@ describe('los enemigos', () => {
     client.onMessage(SHOT_MESSAGE, () => {});
     const enemigo = room.enemigos().find((id) => room.state.players.get(id)!.floor === 1)!;
     const e = room.state.players.get(enemigo)!;
-    const { x, y, loot } = e;
+    const { x, y } = e;
+    const items = [...e.items];
     const yo = room.state.players.get(client.sessionId)!;
     yo.hp = 250;
     alLado(room, client.sessionId, enemigo);
@@ -791,7 +809,7 @@ describe('los enemigos', () => {
       if (!room.tryAttack(client.sessionId, enemigo)) rondaSiguiente(room);
     }
     expect(room.state.players.has(enemigo)).toBe(false);
-    expect(room.caches[contenedores]).toEqual({ floor: 1, x, y, value: loot });
+    expect(room.caches[contenedores]).toEqual({ floor: 1, x, y, items });
     expect(room.fallen).toEqual([]);
     expect(room.turns!.participants).not.toContain(enemigo);
   });
@@ -799,5 +817,100 @@ describe('los enemigos', () => {
   it('sin jugadores no juegan', async () => {
     const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
     expect(room.runAI()).toBe(false);
+  });
+});
+
+describe('objetos', () => {
+  it('se entra con la pistola equipada, y llega el catálogo', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
+    const client = await colyseus.connectTo(room);
+    client.onMessage(VISION_MESSAGE, () => {});
+    let catalogo: unknown = null;
+    client.onMessage(ITEMS_MESSAGE, (m: unknown) => (catalogo = m));
+    // El que se manda al entrar sale antes de que exista el handler; se pide.
+    client.send(ITEMS_MESSAGE);
+    for (let i = 0; i < 20 && catalogo === null; i++) await room.waitForNextPatch();
+
+    const c = room.state.players.get(client.sessionId)!;
+    expect([...c.items]).toEqual([STARTING_WEAPON]);
+    expect(c.weapon).toBe(STARTING_WEAPON);
+    expect(c.armor).toBe('');
+    expect(c.loot).toBe(valueOf([STARTING_WEAPON]));
+    expect(catalogo).toEqual(ITEMS);
+  });
+
+  /** Un jugador solo, con su turno, y unos objetos en la mochila. */
+  async function conMochila(items: string[]) {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
+    const client = await entrar(room);
+    const c = room.state.players.get(client.sessionId)!;
+    for (const id of items) c.items.push(id);
+    return { room, id: client.sessionId, c };
+  }
+
+  it('equipar un arma de la mochila cambia la que se usa y cuesta acción', async () => {
+    const { room, id, c } = await conMochila(['escopeta']);
+    expect(room.tryEquip(id, 'escopeta')).toBe(true);
+    expect(c.weapon).toBe('escopeta');
+    expect(c.ap).toBe(AP_POR_TURNO - AP_EQUIPAR);
+    expect(room.tryEquip(id, 'escopeta'), 'ya la tiene en la mano').toBe(false);
+  });
+
+  it('no se equipa lo que no se lleva ni lo que no es arma o armadura', async () => {
+    const { room, id, c } = await conMochila(['chatarra']);
+    expect(room.tryEquip(id, 'rifle-laser')).toBe(false);
+    expect(room.tryEquip(id, 'chatarra')).toBe(false);
+    expect(room.tryEquip(id, 'inventado')).toBe(false);
+    expect(c.weapon).toBe(STARTING_WEAPON);
+  });
+
+  it('la armadura se pone y se saca', async () => {
+    const { room, id, c } = await conMochila(['metal']);
+    expect(room.tryEquip(id, 'metal')).toBe(true);
+    expect(c.armor).toBe('metal');
+    expect(room.tryEquip(id, 'metal')).toBe(true);
+    expect(c.armor).toBe('');
+  });
+
+  it('un estimulante cura, se gasta y baja el valor de lo que se lleva', async () => {
+    const { room, id, c } = await conMochila(['estimulante']);
+    c.loot = valueOf(c.items);
+    c.hp = 5;
+    expect(room.tryUse(id, 'estimulante')).toBe(true);
+    expect(c.hp).toBe(15);
+    expect([...c.items]).toEqual([STARTING_WEAPON]);
+    expect(c.loot).toBe(valueOf([STARTING_WEAPON]));
+    expect(c.ap).toBe(AP_POR_TURNO - AP_USAR);
+  });
+
+  it('no cura por encima del máximo, ni se gasta con la vida entera', async () => {
+    const { room, id, c } = await conMochila(['superestimulante', 'superestimulante']);
+    expect(room.tryUse(id, 'superestimulante'), 'vida entera').toBe(false);
+    c.hp = HP_MAX - 3;
+    expect(room.tryUse(id, 'superestimulante')).toBe(true);
+    expect(c.hp).toBe(HP_MAX);
+    expect([...c.items].filter((i) => i === 'superestimulante')).toHaveLength(1);
+  });
+
+  it('el arma equipada pone el costo del disparo', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
+    const uno = await entrar(room);
+    const dos = await entrar(room);
+    sincronizarRonda(room);
+    const sala = room.mapOf(0).rooms[0];
+    const a = room.state.players.get(uno.sessionId)!;
+    const b = room.state.players.get(dos.sessionId)!;
+    Object.assign(a, { x: sala.x, y: sala.y });
+    Object.assign(b, { x: sala.x + 1, y: sala.y });
+    room.publish();
+    const [tira, recibe] = room.activos().has(uno.sessionId) ? [a, b] : [b, a];
+    const tiraId = tira === a ? uno.sessionId : dos.sessionId;
+    const recibeId = tira === a ? dos.sessionId : uno.sessionId;
+    tira.items.push('subfusil');
+    tira.weapon = 'subfusil';
+
+    expect(room.tryAttack(tiraId, recibeId)).not.toBeNull();
+    expect(tira.ap).toBe(AP_POR_TURNO - weaponStats('subfusil').ap);
+    expect(recibe.hp).toBeGreaterThanOrEqual(HP_MAX - weaponStats('subfusil').damageMax);
   });
 });

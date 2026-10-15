@@ -608,6 +608,7 @@ const lobby = setupLobby({
   room: $<HTMLSelectElement>('lobby-room'),
   turn: $('lobby-turn'),
   endTurn: $<HTMLButtonElement>('lobby-end-turn'),
+  inventory: $('lobby-inventory'),
   onTileSeed: (seed) => {
     semillaSala = seed;
     void armarTablero(seed);

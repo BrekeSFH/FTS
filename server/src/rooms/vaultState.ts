@@ -38,10 +38,21 @@ export const Combatant = schema(
      */
     active: t.boolean(),
     /**
-     * Cuánto vale lo que lleva encima. Es público a propósito: saber quién
-     * va cargado es lo que vuelve tentadora una emboscada.
+     * Cuánto vale lo que lleva encima: la suma de `items`. Es público a
+     * propósito: saber quién va cargado es lo que vuelve tentadora una
+     * emboscada.
      */
     loot: t.uint32(),
+    /**
+     * Lo que lleva, como ids del catálogo de `items.ts`. Público por ahora,
+     * como el mapa: esconderlo de los demás pide filtrar el estado por
+     * jugador, y queda anotado en el GDD.
+     */
+    items: t.array('string'),
+    /** Arma equipada: un id que está en `items`. */
+    weapon: t.string(),
+    /** Armadura equipada, o vacío. */
+    armor: t.string(),
     /** Vida que le queda. Pública: se ve si alguien está herido. */
     hp: t.uint8(),
     /** Vida con la que entró, para poder decir cuánto le falta. */

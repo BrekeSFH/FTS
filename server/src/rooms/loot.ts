@@ -1,21 +1,20 @@
 /**
  * Botín y extracción de la Vault: los pasos 2 y 3 del bucle del punto 4.
  *
- * Por ahora el botín es solo un valor. Los objetos de verdad están definidos
- * en los archivos del juego, que el servidor no puede alojar (punto 1), así
- * que un catálogo de objetos necesita primero decidir cómo el servidor sabe
- * qué existe sin leer los `.BOS`. El valor alcanza para lo que importa acá:
- * que bajar valga la pena y que morir antes de salir cueste.
+ * El botín son objetos del catálogo de `items.ts`, y lo que vale es la suma
+ * de lo que valen. Cuanto más abajo, más alto el nivel tecnológico de lo que
+ * sale, que es lo que hace que bajar valga la pena.
  *
  * Todo sale de la semilla de la instancia, como el mapa: con la misma
  * semilla, los mismos contenedores y las mismas salidas en las mismas rondas.
  */
+import { randomItemOfTier, tierForFloor } from './items';
 import { STAIRS_DOWN, STAIRS_UP, createRandom, isBlocked, type Cell, type DungeonFloor } from './map';
 
 export interface Cache extends Cell {
   floor: number;
-  /** Cuánto vale lo que hay adentro. No se publica hasta abrirlo. */
-  value: number;
+  /** Lo que hay adentro, como ids del catálogo. No se publica hasta abrirlo. */
+  items: string[];
 }
 
 export interface Exit extends Cell {
@@ -26,14 +25,8 @@ export interface Exit extends Cell {
   closes: number;
 }
 
-/** Valor medio de un contenedor del primer piso. */
-export const VALOR_BASE = 10;
-
-/**
- * Cuánto crece el valor por piso. Con 1, el tercer piso vale el triple que el
- * primero: lo bastante para que bajar tiente, sin que el primero no valga nada.
- */
-const CRECIMIENTO_POR_PISO = 1;
+/** Cuántos objetos puede tener un contenedor, como máximo. */
+const OBJETOS_MAXIMOS = 3;
 
 /** Probabilidad de que una sala tenga contenedor. */
 const SALAS_CON_BOTIN = 0.6;
@@ -88,12 +81,17 @@ export function placeCaches(floors: readonly DungeonFloor[], seed: number): Cach
     for (const sala of salas) {
       const celda = celdaDeSala(map, sala, random);
       if (!celda) continue;
-      // Entre la mitad y vez y media del valor del piso.
-      const media = VALOR_BASE * (1 + floor * CRECIMIENTO_POR_PISO);
-      const value = Math.max(1, Math.round(media * (0.5 + random())));
-      out.push({ floor, ...celda, value });
+      const cuantos = 1 + Math.floor(random() * OBJETOS_MAXIMOS);
+      out.push({ floor, ...celda, items: rollItems(floor, cuantos, random) });
     }
   }
+  return out;
+}
+
+/** Unos objetos al azar, del nivel que corresponde a un piso. */
+export function rollItems(floor: number, cuantos: number, random: () => number): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < cuantos; i++) out.push(randomItemOfTier(tierForFloor(floor, random()), random()).id);
   return out;
 }
 

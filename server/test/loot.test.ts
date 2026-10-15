@@ -3,10 +3,10 @@ import {
   PRIMERA_SALIDA,
   SALIDA_CADA,
   SALIDA_DURA,
-  VALOR_BASE,
   exitAt,
   placeCaches,
 } from '../src/rooms/loot';
+import { ITEMS, itemById, valueOf } from '../src/rooms/items';
 import { FLOOR, generateDungeon } from '../src/rooms/map';
 
 const pisos = generateDungeon(40, 30, 7, 3);
@@ -37,15 +37,25 @@ describe('placeCaches', () => {
     const cuenta = [0, 0, 0];
     for (let seed = 1; seed <= 60; seed++) {
       for (const c of placeCaches(generateDungeon(40, 30, seed, 3), seed)) {
-        suma[c.floor] += c.value;
+        suma[c.floor] += valueOf(c.items);
         cuenta[c.floor]++;
       }
     }
     const media = suma.map((s, i) => s / cuenta[i]);
-    expect(media[0]).toBeGreaterThan(VALOR_BASE * 0.8);
-    expect(media[0]).toBeLessThan(VALOR_BASE * 1.2);
     expect(media[1]).toBeGreaterThan(media[0] * 1.5);
     expect(media[2]).toBeGreaterThan(media[1] * 1.2);
+  });
+
+  it('solo objetos del catálogo, de uno a tres, y nunca el equipo inicial', () => {
+    for (const c of placeCaches(pisos, 7)) {
+      expect(c.items.length).toBeGreaterThanOrEqual(1);
+      expect(c.items.length).toBeLessThanOrEqual(3);
+      for (const id of c.items) {
+        expect(itemById(id), id).toBeDefined();
+        expect(itemById(id)!.tier).toBeGreaterThan(0);
+      }
+    }
+    expect(ITEMS.length).toBeGreaterThan(0);
   });
 
   it('con la misma semilla, los mismos contenedores', () => {

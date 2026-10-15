@@ -3,8 +3,10 @@
  *
  * Lo mínimo para que se pueda morir, y con eso perder el botín como pide el
  * punto 4: vida, un disparo con probabilidad que cae con la distancia y daño
- * en un rango. Los modos de disparo del juego original (apuntado, ráfaga) y
- * las armas de verdad esperan a que haya objetos; ver `loot.ts`.
+ * en un rango. El arma pone el daño, el costo, el alcance y la puntería, y la
+ * armadura del blanco resta de cada impacto; los números están en
+ * `items.ts`. Los modos de disparo del juego original (apuntado, ráfaga)
+ * todavía no están.
  *
  * Son funciones puras y las tiradas las pone quien llama, para que la sala
  * pueda sacarlas de su semilla y un test pueda fijarlas.
@@ -16,12 +18,9 @@ import { SIGHT_RADIUS, canSee } from './vision';
 export const HP_MAX = 30;
 
 /**
- * Lo que cuesta un disparo. La mitad del turno: o se dispara dos veces, o se
- * camina y se dispara una. Cubrirse cuesta el disparo que no se hace.
+ * Hasta dónde llega un disparo como mucho: lo mismo que la vista. Cada arma
+ * tiene su alcance, pero ninguna dispara a lo que no se ve.
  */
-export const AP_DISPARO = 3;
-
-/** Hasta dónde llega un disparo: lo mismo que la vista. */
 export const ALCANCE = SIGHT_RADIUS;
 
 /** Probabilidad a quemarropa, en por ciento. */
@@ -30,10 +29,6 @@ const PROBABILIDAD_MAXIMA = 95;
 const PERDIDA_POR_CELDA = 6;
 /** Ni el tiro más largo es imposible. */
 const PROBABILIDAD_MINIMA = 10;
-
-/** Rango del daño de un impacto. Con 30 de vida, entre 3 y 5 impactos. */
-export const DANO_MINIMO = 6;
-export const DANO_MAXIMO = 12;
 
 export interface Position {
   floor: number;
@@ -52,17 +47,21 @@ export function distance(a: Position, b: Position): number {
  * El alcance se mide igual que la vista, para que nunca se pueda disparar a
  * alguien que no se está viendo ni dejar de poder dispararle a quien sí.
  */
-export function canShoot(map: GameMap, a: Position, b: Position): boolean {
+export function canShoot(map: GameMap, a: Position, b: Position, range = ALCANCE): boolean {
   if (a.floor !== b.floor) return false;
   if (a.x === b.x && a.y === b.y) return false;
-  if (distance(a, b) > ALCANCE) return false;
+  if (distance(a, b) > Math.min(range, ALCANCE)) return false;
   return canSee(map, a.x, a.y, b.x, b.y);
 }
 
-/** Probabilidad de impacto en por ciento, según la distancia. */
-export function hitChance(a: Position, b: Position): number {
+/**
+ * Probabilidad de impacto en por ciento, según la distancia y la puntería
+ * del arma. Nunca pasa del máximo: ni a quemarropa es seguro.
+ */
+export function hitChance(a: Position, b: Position, accuracy = 0): number {
   const lejos = Math.max(0, Math.round(distance(a, b)) - 1);
-  return Math.max(PROBABILIDAD_MINIMA, PROBABILIDAD_MAXIMA - lejos * PERDIDA_POR_CELDA);
+  const base = PROBABILIDAD_MAXIMA - lejos * PERDIDA_POR_CELDA + accuracy;
+  return Math.max(PROBABILIDAD_MINIMA, Math.min(PROBABILIDAD_MAXIMA, base));
 }
 
 export interface Shot {
@@ -72,9 +71,11 @@ export interface Shot {
 
 /**
  * Resuelve un disparo con dos tiradas ya hechas: `d100` de 1 a 100 para el
- * impacto y `dano` entre `DANO_MINIMO` y `DANO_MAXIMO`.
+ * impacto y `dano` dentro del rango del arma. La armadura resta, pero un
+ * impacto siempre hace al menos 1: si no, una armadura buena volvería
+ * inmortal a quien la lleva.
  */
-export function resolveShot(a: Position, b: Position, d100: number, dano: number): Shot {
-  const hit = d100 <= hitChance(a, b);
-  return { hit, damage: hit ? dano : 0 };
+export function resolveShot(chance: number, d100: number, dano: number, reduction = 0): Shot {
+  const hit = d100 <= chance;
+  return { hit, damage: hit ? Math.max(1, dano - reduction) : 0 };
 }
