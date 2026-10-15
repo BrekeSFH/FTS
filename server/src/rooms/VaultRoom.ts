@@ -10,6 +10,7 @@
  * decide. Acá además decide si siquiera le toca.
  */
 import { Client, Room } from '@colyseus/core';
+import { AP_DISPARO, DANO_MAXIMO, DANO_MINIMO, HP_MAX, canShoot, hitChance, resolveShot } from './combat';
 import { whoCanAct, type Combatant as Luchador } from './contact';
 import { DEFAULT_FACING, facingFromStep } from './direction';
 import {
@@ -81,6 +82,39 @@ export const EXTRACTED_MESSAGE = 'extracted';
 export interface ExtractedMessage {
   /** El valor de lo que se llevó. */
   loot: number;
+}
+
+/** Mensaje con el resultado de un disparo, para el que tira y el que recibe. */
+export const SHOT_MESSAGE = 'shot';
+
+export interface ShotMessage {
+  /** Sesión de quien disparó. */
+  from: string;
+  /** Sesión del blanco. */
+  to: string;
+  /** Nombres, porque el que muere ya no está en el estado para buscarlo. */
+  fromName: string;
+  toName: string;
+  hit: boolean;
+  damage: number;
+  /** Con qué probabilidad se tiró, en por ciento. */
+  chance: number;
+  killed: boolean;
+}
+
+/** Mensaje para el que muere, antes de sacarlo de la sala. */
+export const DIED_MESSAGE = 'died';
+
+export interface DiedMessage {
+  /** El botín que perdió. Quedó en el piso, donde cayó. */
+  loot: number;
+  /** Quién lo mató. */
+  by: string;
+}
+
+export interface AttackMessage {
+  /** Sesión del blanco. */
+  target: string;
 }
 
 /** Quién salió y con cuánto. Lo va a leer el alijo, cuando exista. */
@@ -163,6 +197,9 @@ export class VaultRoom extends Room<VaultRoomOptions> {
    */
   extracted: Extraction[] = [];
 
+  /** Quiénes murieron y cuánto dejaron. Lo mismo: para cuando exista el alijo. */
+  fallen: Extraction[] = [];
+
   override onCreate(options: { seed?: number } = {}): void {
     const seed = options.seed ?? randomSeed();
     this.floors = generateDungeon(VAULT_WIDTH, VAULT_HEIGHT, seed, VAULT_FLOORS, MAP_OPTIONS);
@@ -192,6 +229,23 @@ export class VaultRoom extends Room<VaultRoomOptions> {
           client.leave();
         } else {
           this.sendVision(client);
+        }
+      }
+      this.publish();
+    });
+
+    this.onMessage('attack', (client, message: AttackMessage) => {
+      const target = typeof message?.target === 'string' ? message.target : '';
+      const resultado = this.tryAttack(client.sessionId, target);
+      if (resultado) {
+        for (const id of new Set([resultado.from, resultado.to])) {
+          this.clients.getById(id)?.send(SHOT_MESSAGE, resultado);
+        }
+        if (resultado.killed) {
+          const muerto = this.clients.getById(resultado.to);
+          const caido = this.fallen[this.fallen.length - 1];
+          muerto?.send(DIED_MESSAGE, { loot: caido.loot, by: resultado.fromName } satisfies DiedMessage);
+          muerto?.leave();
         }
       }
       this.publish();
@@ -234,11 +288,13 @@ export class VaultRoom extends Room<VaultRoomOptions> {
         // Sin party pedida se reparten alternadas: una sala de prueba con
         // todos en el mismo bando nunca llegaría a mostrar la Iniciativa.
         party: sanitizeParty(options.party, PARTIES[n % PARTIES.length]),
-        initiative: this.tirarIniciativa(),
+        initiative: this.tirar(20),
         ap: AP_POR_TURNO,
         done: false,
         active: false,
         loot: 0,
+        hp: HP_MAX,
+        maxHp: HP_MAX,
       }),
     );
 
@@ -258,13 +314,13 @@ export class VaultRoom extends Room<VaultRoomOptions> {
   }
 
   /**
-   * Tirada de Iniciativa, 1 a 20.
+   * Una tirada de 1 a `caras`: la Iniciativa, el impacto, el daño.
    *
    * Sale de la semilla de la sala y no de `Math.random` para que una sala
    * creada con semilla fija se comporte igual dos veces, que es lo que
-   * permite testear el orden de turnos.
+   * permite testear el orden de turnos y los disparos.
    */
-  private tirarIniciativa(): number {
+  private tirar(caras: number): number {
     // xorshift32, el mismo que usa la generación del mapa.
     let x = this.siguienteTirada >>> 0 || 1;
     x ^= x << 13;
@@ -273,7 +329,68 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     x ^= x << 5;
     x >>>= 0;
     this.siguienteTirada = x;
-    return (x % 20) + 1;
+    return (x % caras) + 1;
+  }
+
+  /**
+   * Dispara a otro, si le toca, le alcanza la acción y lo tiene a tiro.
+   *
+   * El fuego amigo vale, como pide el punto 3: el blanco puede ser de la
+   * misma party. Devuelve el resultado, o `null` si el disparo no se hizo.
+   */
+  tryAttack(sessionId: string, targetId: string): ShotMessage | null {
+    const tirador = this.state.players.get(sessionId);
+    const blanco = this.state.players.get(targetId);
+    if (!tirador || !blanco || sessionId === targetId) return null;
+    if (!this.activos().has(sessionId)) return null;
+    if (tirador.ap < AP_DISPARO) return null;
+    if (!canShoot(this.mapOf(tirador.floor), tirador, blanco)) return null;
+
+    const facing = facingFromStep(Math.sign(blanco.x - tirador.x), Math.sign(blanco.y - tirador.y));
+    if (facing !== null) tirador.facing = facing;
+
+    const chance = hitChance(tirador, blanco);
+    const dano = DANO_MINIMO + this.tirar(DANO_MAXIMO - DANO_MINIMO + 1) - 1;
+    const { hit, damage } = resolveShot(tirador, blanco, this.tirar(100), dano);
+    tirador.ap -= AP_DISPARO;
+
+    const resultado: ShotMessage = {
+      from: sessionId,
+      to: targetId,
+      fromName: tirador.name,
+      toName: blanco.name,
+      hit,
+      damage,
+      chance,
+      killed: false,
+    };
+    blanco.hp = Math.max(0, blanco.hp - damage);
+    if (blanco.hp === 0) {
+      this.kill(targetId);
+      resultado.killed = true;
+    }
+    if (this.state.players.has(sessionId) && tirador.ap === 0) this.endTurn(sessionId);
+    return resultado;
+  }
+
+  /**
+   * Saca a alguien de la instancia sin su botín, como pide el punto 4.
+   *
+   * Lo que llevaba no desaparece: queda en el piso como un contenedor más, y
+   * quien lo mató, o cualquiera que pase, se lo puede llevar. Es lo que hace
+   * que matar a alguien cargado valga la pena.
+   */
+  private kill(sessionId: string): void {
+    const muerto = this.state.players.get(sessionId);
+    if (!muerto) return;
+    const { name, party, loot, floor, x, y } = muerto;
+    this.fallen.push({ name, party, loot });
+    if (loot > 0) {
+      this.caches.push({ floor, x, y, value: loot });
+      this.state.caches.push(new LootCache({ floor, x, y, looted: false }));
+    }
+    this.state.players.delete(sessionId);
+    if (this.turns) this.turns = leave(this.turns, sessionId, Date.now());
   }
 
   /** El mapa de un piso. */

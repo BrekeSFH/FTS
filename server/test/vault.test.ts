@@ -11,13 +11,17 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { VAULT_ROOM, createServer } from '../src/createServer';
 import { FLOOR, isBlocked } from '../src/rooms/map';
 import { SIGHT_RADIUS, visibleMask } from '../src/rooms/vision';
+import { AP_DISPARO, HP_MAX } from '../src/rooms/combat';
 import { PRIMERA_SALIDA, exitAt } from '../src/rooms/loot';
 import {
   AP_POR_TURNO,
   AP_SAQUEO,
+  DIED_MESSAGE,
+  type DiedMessage,
   EXTRACTED_MESSAGE,
   type ExtractedMessage,
   PARTIES,
+  SHOT_MESSAGE,
   VAULT_FLOORS,
   VAULT_HEIGHT,
   VAULT_WIDTH,
@@ -556,5 +560,124 @@ describe('saqueo y extracción', () => {
     await client.leave();
     await room.waitForNextPatch();
     expect(room.extracted).toEqual([]);
+  });
+});
+
+describe('disparos y muerte', () => {
+  /**
+   * Dos en la misma sala del primer piso, uno al lado del otro, los dos con
+   * el turno abierto. Devuelve primero al que le toca: en contacto, solo
+   * actúa el de más Iniciativa.
+   */
+  async function duelo(room: VaultRoom) {
+    const uno = await entrar(room);
+    const dos = await entrar(room);
+    sincronizarRonda(room);
+    const sala = room.mapOf(0).rooms[0];
+    const a = room.state.players.get(uno.sessionId)!;
+    const b = room.state.players.get(dos.sessionId)!;
+    Object.assign(a, { floor: 0, x: sala.x, y: sala.y });
+    Object.assign(b, { floor: 0, x: sala.x + 1, y: sala.y });
+    room.publish();
+    const tira = room.activos().has(uno.sessionId) ? uno : dos;
+    const recibe = tira === uno ? dos : uno;
+    return { tira, recibe };
+  }
+
+  it('entran con la vida entera', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const client = await entrar(room);
+    const c = room.state.players.get(client.sessionId)!;
+    expect(c.hp).toBe(HP_MAX);
+    expect(c.maxHp).toBe(HP_MAX);
+  });
+
+  it('un disparo cuesta acción y, si pega, saca vida', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const { tira, recibe } = await duelo(room);
+    const tirador = room.state.players.get(tira.sessionId)!;
+    const blanco = room.state.players.get(recibe.sessionId)!;
+
+    const r = room.tryAttack(tira.sessionId, recibe.sessionId)!;
+    expect(r).not.toBeNull();
+    expect(r.chance).toBe(95);
+    expect(tirador.ap).toBe(AP_POR_TURNO - AP_DISPARO);
+    expect(blanco.hp).toBe(HP_MAX - r.damage);
+    if (r.hit) expect(r.damage).toBeGreaterThan(0);
+    else expect(r.damage).toBe(0);
+  });
+
+  it('no se dispara sin turno, sin acción, a uno mismo ni a otro piso', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const { tira, recibe } = await duelo(room);
+    expect(room.tryAttack(recibe.sessionId, tira.sessionId), 'sin turno').toBeNull();
+    expect(room.tryAttack(tira.sessionId, tira.sessionId), 'a sí mismo').toBeNull();
+
+    const tirador = room.state.players.get(tira.sessionId)!;
+    tirador.ap = AP_DISPARO - 1;
+    expect(room.tryAttack(tira.sessionId, recibe.sessionId), 'sin acción').toBeNull();
+
+    tirador.ap = AP_POR_TURNO;
+    room.state.players.get(recibe.sessionId)!.floor = 1;
+    room.publish();
+    expect(room.tryAttack(tira.sessionId, recibe.sessionId), 'otro piso').toBeNull();
+  });
+
+  it('el fuego amigo vale', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const uno = await entrar(room, { party: PARTIES[0] });
+    const dos = await entrar(room, { party: PARTIES[0] });
+    sincronizarRonda(room);
+    const sala = room.mapOf(0).rooms[0];
+    Object.assign(room.state.players.get(uno.sessionId)!, { x: sala.x, y: sala.y });
+    Object.assign(room.state.players.get(dos.sessionId)!, { x: sala.x + 1, y: sala.y });
+    room.publish();
+    expect(room.tryAttack(uno.sessionId, dos.sessionId)).not.toBeNull();
+  });
+
+  it('al morir deja el botín en el piso y sale de la sala', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const { tira, recibe } = await duelo(room);
+    let avisado: DiedMessage | null = null;
+    recibe.onMessage(DIED_MESSAGE, (m: DiedMessage) => (avisado = m));
+    recibe.onMessage(SHOT_MESSAGE, () => {});
+    tira.onMessage(SHOT_MESSAGE, () => {});
+    const seFue = new Promise<void>((resolve) => recibe.onLeave(() => resolve()));
+
+    const blanco = room.state.players.get(recibe.sessionId)!;
+    const tirador = room.state.players.get(tira.sessionId)!;
+    const { x, y, name } = blanco;
+    blanco.hp = 1;
+    blanco.loot = 25;
+    const contenedores = room.caches.length;
+
+    // A quemarropa pega el 95 %: unos pocos intentos alcanzan.
+    for (let i = 0; i < 20 && room.state.players.has(recibe.sessionId); i++) {
+      tirador.ap = AP_POR_TURNO;
+      tira.send('attack', { target: recibe.sessionId });
+      await room.waitForNextPatch();
+    }
+    await seFue;
+
+    expect(avisado).toEqual({ loot: 25, by: tirador.name });
+    expect(room.state.players.has(recibe.sessionId)).toBe(false);
+    expect(room.fallen).toEqual([expect.objectContaining({ name, loot: 25 })]);
+    expect(room.caches).toHaveLength(contenedores + 1);
+    expect(room.caches[contenedores]).toEqual({ floor: 0, x, y, value: 25 });
+    expect(room.state.caches[contenedores].looted).toBe(false);
+  });
+
+  it('quien muere sin botín no deja contenedor', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const { tira, recibe } = await duelo(room);
+    const tirador = room.state.players.get(tira.sessionId)!;
+    room.state.players.get(recibe.sessionId)!.hp = 1;
+    const contenedores = room.caches.length;
+    for (let i = 0; i < 20 && room.state.players.has(recibe.sessionId); i++) {
+      tirador.ap = AP_POR_TURNO;
+      room.tryAttack(tira.sessionId, recibe.sessionId);
+    }
+    expect(room.state.players.has(recibe.sessionId)).toBe(false);
+    expect(room.caches).toHaveLength(contenedores);
   });
 });

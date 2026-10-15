@@ -27,6 +27,7 @@ import {
 import { hidesCell } from '../iso/occlusion';
 import { wallPlan, type WallSuffix } from '../iso/walls';
 import type { VisionView } from './fog';
+import type { Origin } from './pointer';
 import type { ExitPoint, LobbyPlayer, LobbyState, LootCache } from './connection';
 
 /** Un tile listo para dibujar, con el punto que se apoya en la celda. */
@@ -220,6 +221,22 @@ function drawExit(context: CanvasRenderingContext2D, exit: ExitPoint): void {
   labelCell(context, exit.x, exit.y, 'SALIDA', 'bold 9px system-ui, sans-serif');
 }
 
+/**
+ * Barra de vida sobre el nombre. Solo en la Vault: en el lobby nadie tiene
+ * vida, y una barra siempre llena sería ruido.
+ */
+function drawHealth(context: CanvasRenderingContext2D, player: LobbyPlayer, x: number, nombreY: number): void {
+  if (player.hp === undefined || !player.maxHp) return;
+  const ANCHO = 32;
+  const ALTO = 4;
+  const y = nombreY - 16;
+  const parte = Math.max(0, Math.min(1, player.hp / player.maxHp));
+  context.fillStyle = 'rgba(0, 0, 0, 0.7)';
+  context.fillRect(x - ANCHO / 2 - 1, y - 1, ANCHO + 2, ALTO + 2);
+  context.fillStyle = parte > 0.5 ? '#4caf50' : parte > 0.25 ? '#e0a020' : '#d03030';
+  context.fillRect(x - ANCHO / 2, y, ANCHO * parte, ALTO);
+}
+
 function drawPlayer(
   context: CanvasRenderingContext2D,
   player: LobbyPlayer,
@@ -247,6 +264,7 @@ function drawPlayer(
     context.lineWidth = 3;
     context.strokeText(player.name, x, pos.y - 4);
     context.fillText(player.name, x, pos.y - 4);
+    drawHealth(context, player, x, pos.y - 4);
     return;
   }
 
@@ -273,8 +291,13 @@ function drawPlayer(
   context.lineWidth = 3;
   context.strokeText(player.name, x, y - DOT_RADIUS * 2 - 4);
   context.fillText(player.name, x, y - DOT_RADIUS * 2 - 4);
+  drawHealth(context, player, x, y - DOT_RADIUS * 2 - 4);
 }
 
+/**
+ * Dibuja el tablero. Devuelve dónde quedó el origen de la grilla, que hace
+ * falta para saber sobre qué se hizo click; `null` si no hubo dónde dibujar.
+ */
 export function renderLobby(
   canvas: HTMLCanvasElement,
   state: LobbyState,
@@ -286,9 +309,9 @@ export function renderLobby(
     character = null,
     vision = null,
   }: RenderOptions,
-): void {
+): Origin | null {
   const context = canvas.getContext('2d');
-  if (!context) return;
+  if (!context) return null;
 
   // Las paredes sobresalen bastante por arriba de su celda.
   // De la pared se mide la cara más alta: con juegos mezclados, una podría
@@ -388,4 +411,5 @@ export function renderLobby(
       drawPlayer(context, player, sessionId === ownSessionId, character ? character(player, sessionId) : null);
     }
   }
+  return { minX: bounds.minX, minY: bounds.minY };
 }

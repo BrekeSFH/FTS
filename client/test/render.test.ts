@@ -151,3 +151,12 @@ describe('renderLobby con botín y salidas', () => {
     expect(vista2.textos, 'explorada pero no a la vista').not.toContain('SALIDA');
   });
 });
+
+describe('renderLobby con vida', () => {
+  it('devuelve el origen de la grilla para ubicar los clicks', () => {
+    const { canvas } = contextoFalso();
+    const origen = renderLobby(canvas, estado(), { ownSessionId: 'yo', floors: [TILE] });
+    expect(origen).not.toBeNull();
+    expect(Number.isFinite(origen!.minX) && Number.isFinite(origen!.minY)).toBe(true);
+  });
+});

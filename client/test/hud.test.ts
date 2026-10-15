@@ -112,3 +112,10 @@ describe('turnHud con botín y salidas', () => {
     expect(hud.text).not.toContain('salida');
   });
 });
+
+describe('turnHud con vida', () => {
+  it('dice cuánta vida queda', () => {
+    const hud = turnHud(sala({ round: 1 }), jugador({ hp: 18, maxHp: 30, active: true, ap: 6 }));
+    expect(hud.text).toContain('vida 18/30');
+  });
+});

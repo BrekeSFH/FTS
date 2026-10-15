@@ -41,6 +41,7 @@ export function turnHud(state: LobbyState | null, me: LobbyPlayer | null | undef
   // para saber cuánto falta bajar.
   const pisos = state.floors?.length ?? 1;
   if (pisos > 1) partes.push(`piso ${(me.floor ?? 0) + 1} de ${pisos}`);
+  if (me.hp !== undefined && me.maxHp) partes.push(`vida ${me.hp}/${me.maxHp}`);
   if (me.loot !== undefined) partes.push(`botín ${me.loot}`);
   // Una salida se avisa aunque esté en otro piso: sin el aviso, encontrarla
   // a tiempo sería pura suerte. Dónde está exactamente hay que ir a verlo.

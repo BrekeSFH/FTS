@@ -8,10 +8,14 @@ import type { LoadedAnimation } from '../iso/spriteset';
 import {
   LOBBY_ROOM,
   connectToLobby,
+  describeShot,
   isLootKey,
+  onDied,
   onExtracted,
+  onShot,
   onVision,
   requestVision,
+  sendAttack,
   sendEndTurn,
   sendLoot,
   sendStep,
@@ -21,6 +25,7 @@ import {
 } from './connection';
 import { floorView, ownFloor } from './floors';
 import { createFog, type Fog } from './fog';
+import { playerAt, toWorld, type Origin } from './pointer';
 import { turnHud } from './hud';
 import { renderLobby, type PlacedTile, type WallSet } from './render';
 
@@ -79,6 +84,8 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     if (!fog) fogs.set(floor, (fog = createFog()));
     return fog;
   };
+  /** Dónde quedó la grilla en el último dibujo, para ubicar los clicks. */
+  let origen: Origin | null = null;
   /** Última semilla avisada, para no rearmar el tablero en cada parche. */
   let tileSeed: number | null = null;
 
@@ -102,7 +109,7 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     // resuelve enseguida.
     if (!room?.state?.players) return;
     const fog = fogOf(ownFloor(room.state, room.sessionId));
-    renderLobby(ui.canvas, floorView(room.state, room.sessionId), {
+    origen = renderLobby(ui.canvas, floorView(room.state, room.sessionId), {
       ownSessionId: room.sessionId,
       floors,
       wall,
@@ -246,14 +253,18 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
         requestAnimationFrame(animar);
         // Salir por una salida también corta la conexión; el aviso llega
         // antes, y es lo que tiene que quedar a la vista.
-        let extraido: number | null = null;
+        let despedida: string | null = null;
         onExtracted(joined, ({ loot }) => {
-          extraido = loot;
+          despedida = `Saliste con vida. Botín: ${loot}.`;
         });
+        onDied(joined, ({ loot, by }) => {
+          despedida = `Te mató ${by}.${loot > 0 ? ` Tu botín (${loot}) quedó donde caíste.` : ''}`;
+        });
+        onShot(joined, (shot) => setStatus(describeShot(shot, joined.sessionId)));
         joined.onLeave((code) => {
           if (room !== joined) return;
-          if (extraido !== null) {
-            disconnect(`Saliste con vida. Botín: ${extraido}.`);
+          if (despedida !== null) {
+            disconnect(despedida);
             return;
           }
           // El servidor cerró la sala o se cayó la conexión.
@@ -282,6 +293,16 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     // evita el viaje de ida y vuelta y el parpadeo que deja.
     if (!turnHud(room.state ?? null, room.state?.players?.get(room.sessionId)).canMove) return;
     sendStep(room, step);
+  });
+
+  // Click sobre otro jugador: dispararle. El servidor decide si se puede;
+  // acá solo se evita mandar lo que seguro no corresponde.
+  ui.canvas.addEventListener('click', (event) => {
+    if (!room?.state?.players || !origen) return;
+    if (!turnHud(room.state, room.state.players.get(room.sessionId)).canMove) return;
+    const punto = toWorld(event.offsetX, event.offsetY, ui.canvas, origen);
+    const blanco = playerAt(floorView(room.state, room.sessionId), punto, room.sessionId);
+    if (blanco) sendAttack(room, blanco.sessionId);
   });
 
   ui.endTurn?.addEventListener('click', () => {

@@ -42,6 +42,10 @@ export const Combatant = schema(
      * va cargado es lo que vuelve tentadora una emboscada.
      */
     loot: t.uint32(),
+    /** Vida que le queda. Pública: se ve si alguien está herido. */
+    hp: t.uint8(),
+    /** Vida con la que entró, para poder decir cuánto le falta. */
+    maxHp: t.uint8(),
   },
   'Combatant',
 );

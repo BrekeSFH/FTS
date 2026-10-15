@@ -58,6 +58,35 @@ export interface LobbyPlayer {
   active?: boolean;
   /** Cuánto vale lo que lleva encima. Solo en la Vault. */
   loot?: number;
+  /** Vida que le queda. Solo en la Vault. */
+  hp?: number;
+  /** Vida con la que entró. Solo en la Vault. */
+  maxHp?: number;
+}
+
+/** Mensaje con el resultado de un disparo, para el que tira y el que recibe. */
+export const SHOT_MESSAGE = 'shot';
+
+export interface ShotMessage {
+  from: string;
+  to: string;
+  fromName: string;
+  toName: string;
+  hit: boolean;
+  damage: number;
+  /** Con qué probabilidad se tiró, en por ciento. */
+  chance: number;
+  killed: boolean;
+}
+
+/** Mensaje para el que muere, justo antes de que la Vault lo saque. */
+export const DIED_MESSAGE = 'died';
+
+export interface DiedMessage {
+  /** El botín que perdió; quedó en el piso donde cayó. */
+  loot: number;
+  /** Quién lo mató. */
+  by: string;
 }
 
 /** Un contenedor. Lo que vale no se publica: se sabe al abrirlo. */
@@ -155,6 +184,36 @@ export function sendEndTurn(room: LobbyRoom): void {
 
 export function sendStep(room: LobbyRoom, step: Step): void {
   room.send('move', step);
+}
+
+/** Dispara a otro jugador. Solo lo escucha la Vault. */
+export function sendAttack(room: LobbyRoom, target: string): void {
+  room.send('attack', { target });
+}
+
+/** Queda avisado de los disparos en los que uno tira o recibe. */
+export function onShot(room: LobbyRoom, handler: (message: ShotMessage) => void): void {
+  room.onMessage<ShotMessage>(SHOT_MESSAGE, handler);
+}
+
+/** Queda avisado si lo matan. */
+export function onDied(room: LobbyRoom, handler: (message: DiedMessage) => void): void {
+  room.onMessage<DiedMessage>(DIED_MESSAGE, handler);
+}
+
+/**
+ * Cómo contarle un disparo a quien estuvo en él. Desde el lado del que tira
+ * o del que recibe, porque "le diste" y "te dio" no son lo mismo.
+ */
+export function describeShot(shot: ShotMessage, ownSessionId: string): string {
+  const prob = `(${shot.chance} %)`;
+  if (shot.from === ownSessionId) {
+    if (!shot.hit) return `Fallaste el disparo a ${shot.toName} ${prob}.`;
+    const final = shot.killed ? ` Cayó ${shot.toName}.` : '';
+    return `Le diste a ${shot.toName}: ${shot.damage} de daño ${prob}.${final}`;
+  }
+  if (!shot.hit) return `${shot.fromName} te disparó y falló.`;
+  return `${shot.fromName} te dio: ${shot.damage} de daño.`;
 }
 
 /** Abre el contenedor que haya al alcance. Solo lo escucha la Vault. */
