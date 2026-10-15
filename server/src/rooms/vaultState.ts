@@ -6,7 +6,14 @@
  * se puede deducir del cliente sin volver a implementar las reglas, y el
  * punto 2 exige que las reglas vivan en el servidor.
  */
-import { ArraySchema, MapSchema, schema, t } from '@colyseus/schema';
+import { ArraySchema, MapSchema, StateView, schema, t } from '@colyseus/schema';
+
+/**
+ * Etiqueta de lo que es solo de quien lo lleva. Es una etiqueta propia y no
+ * la de por defecto a propósito: un cliente puede tener a otro en su vista
+ * para verlo en el mapa sin que eso le muestre la mochila.
+ */
+export const PRIVADO = 1;
 
 export const Combatant = schema(
   {
@@ -44,12 +51,16 @@ export const Combatant = schema(
      */
     loot: t.uint32(),
     /**
-     * Lo que lleva, como ids del catálogo de `items.ts`. Público por ahora,
-     * como el mapa: esconderlo de los demás pide filtrar el estado por
-     * jugador, y queda anotado en el GDD.
+     * Lo que lleva, como ids del catálogo de `items.ts`. Solo lo recibe su
+     * dueño: viaja con la etiqueta `PRIVADO`, y cada cliente agrega con esa
+     * etiqueta únicamente a su propio combatiente. Lo que vale, en `loot`,
+     * sigue siendo de todos.
      */
-    items: t.array('string'),
-    /** Arma equipada: un id que está en `items`. */
+    items: t.array('string').view(PRIVADO),
+    /**
+     * Arma equipada: un id que está en `items`. Pública, como la armadura:
+     * lo que alguien tiene en la mano se ve, lo que lleva en la mochila no.
+     */
     weapon: t.string(),
     /** Armadura equipada, o vacío. */
     armor: t.string(),
@@ -130,4 +141,4 @@ export const VaultState = schema(
 
 export type CombatantType = InstanceType<typeof Combatant>;
 export type VaultStateType = InstanceType<typeof VaultState>;
-export { ArraySchema, MapSchema };
+export { ArraySchema, MapSchema, StateView };

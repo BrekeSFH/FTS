@@ -45,6 +45,8 @@ import {
   ExitPoint,
   LootCache,
   MapSchema,
+  PRIVADO,
+  StateView,
   VaultState,
   type CombatantType,
   type VaultStateType,
@@ -449,6 +451,11 @@ export class VaultRoom extends Room<VaultRoomOptions> {
       }),
     );
 
+    // La mochila propia se ve; la de los demás, no. Lo que no tiene
+    // etiqueta lo reciben todos igual.
+    client.view = new StateView();
+    client.view.add(this.state.players.get(client.sessionId)!, PRIVADO);
+
     const now = Date.now();
     this.turns = this.turns
       ? join(this.turns, client.sessionId, now)
@@ -467,6 +474,8 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     this.duenos.delete(client.sessionId);
     this.state.players.delete(client.sessionId);
     if (this.turns) this.turns = leave(this.turns, client.sessionId, Date.now());
+    // Si no se suelta, el id de la vista puede reusarse con lo que veía.
+    client.view?.dispose();
     this.publish();
   }
 
