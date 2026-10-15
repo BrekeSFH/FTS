@@ -50,8 +50,15 @@ import { playerToken } from './identity';
 import { loadoutFrom, stashRows, valueOfItems, type StashContents } from './stash';
 import { ACTION_LABEL, formatKg, inventoryRows, loadSummary, weightOfItems, type InventoryAction } from './inventory';
 import { playerAt, toWorld, type Origin } from './pointer';
+import { cellCenter } from '../iso/projection';
 import { turnHud } from './hud';
 import { renderLobby, type PlacedTile, type WallSet } from './render';
+
+/**
+ * La resolución de la pantalla completa: la del juego en un monitor Full HD.
+ * En otro monitor se escala sin deformarse.
+ */
+export const PANTALLA = { width: 1920, height: 1080 } as const;
 
 export interface LobbyElements {
   connect: HTMLButtonElement;
@@ -71,6 +78,11 @@ export interface LobbyElements {
   inventory?: HTMLElement | null;
   /** Línea con lo que pesa la mochila y la munición del arma. Solo en la Vault. */
   load?: HTMLElement | null;
+  /**
+   * Aviso dentro del tablero: repite el último mensaje de estado, que en
+   * pantalla completa no se vería porque la línea de estado queda afuera.
+   */
+  toast?: HTMLElement | null;
   /**
    * Panel del alijo: lo que hay guardado y qué llevar. Se llena al entrar al
    * lobby y queda a la vista al desconectarse, para elegir antes de bajar.
@@ -256,10 +268,24 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
    */
   const movimiento = new Map<string, { x: number; y: number; desde: number }>();
 
+  /** Para que un aviso nuevo no se borre con el plazo del anterior. */
+  let plazoAviso: ReturnType<typeof setTimeout> | null = null;
+
   const setStatus = (message: string, isError = false): void => {
     ui.status.textContent = message;
     ui.status.classList.toggle('error', isError);
+    if (!ui.toast) return;
+    ui.toast.textContent = message;
+    ui.toast.classList.toggle('error', isError);
+    ui.toast.hidden = message.length === 0;
+    if (plazoAviso) clearTimeout(plazoAviso);
+    plazoAviso = setTimeout(() => {
+      if (ui.toast) ui.toast.hidden = true;
+    }, 5000);
   };
+
+  /** Si el tablero está en pantalla completa, que es cuando se juega como en el juego. */
+  const pantallaCompleta = (): boolean => document.fullscreenElement === ui.board;
 
   const draw = (): void => {
     // `joinOrCreate` resuelve antes de que llegue el primer estado, así que
@@ -267,6 +293,7 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     // resuelve enseguida.
     if (!room?.state?.players) return;
     const fog = fogOf(ownFloor(room.state, room.sessionId));
+    const yo = room.state.players.get(room.sessionId);
     origen = renderLobby(ui.canvas, floorView(room.state, room.sessionId, mapas), {
       ownSessionId: room.sessionId,
       floors,
@@ -275,6 +302,11 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
       character: character ? spriteFor : null,
       // Sin máscara todavía se dibuja todo, para no arrancar en negro.
       vision: fog.empty ? null : fog,
+      // En pantalla completa, la pantalla del juego: 1920×1080 a tamaño
+      // original, siguiendo al personaje propio.
+      viewport: pantallaCompleta()
+        ? { width: PANTALLA.width, height: PANTALLA.height, focus: yo ? cellCenter(yo.x, yo.y) : null }
+        : null,
     });
     actualizarTurno();
     actualizarMochila();
@@ -425,6 +457,8 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
   });
 
   document.addEventListener('fullscreenchange', () => {
+    // El tamaño del canvas cambia con el modo: hay que volver a dibujar.
+    draw();
     if (!ui.fullscreen) return;
     ui.fullscreen.textContent = document.fullscreenElement ? 'Salir de pantalla completa' : 'Pantalla completa';
   });

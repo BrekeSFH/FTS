@@ -610,6 +610,7 @@ const lobby = setupLobby({
   endTurn: $<HTMLButtonElement>('lobby-end-turn'),
   inventory: $('lobby-inventory'),
   load: $('lobby-load'),
+  toast: $('lobby-toast'),
   stash: $('lobby-stash'),
   market: $('lobby-market'),
   onTileSeed: (seed) => {

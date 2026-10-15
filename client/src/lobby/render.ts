@@ -28,6 +28,7 @@ import { hidesCell } from '../iso/occlusion';
 import { wallPlan, type WallSuffix } from '../iso/walls';
 import type { VisionView } from './fog';
 import type { Origin } from './pointer';
+import type { Point } from '../iso/projection';
 import type { ExitPoint, LobbyPlayer, LobbyState, LootCache } from './connection';
 
 /** Un tile listo para dibujar, con el punto que se apoya en la celda. */
@@ -93,6 +94,22 @@ export interface RenderOptions {
    * el servidor no haya mandado la primera máscara, para no arrancar a oscuras.
    */
   vision?: VisionView | null;
+  /**
+   * Una cámara de tamaño fijo, como la pantalla del juego. Sin esto el canvas
+   * toma el tamaño del mapa entero y se ve todo de una vez.
+   */
+  viewport?: Viewport | null;
+}
+
+/** Lo que encuadra la cámara: un rectángulo de tantos píxeles centrado en un punto. */
+export interface Viewport {
+  width: number;
+  height: number;
+  /**
+   * El punto del mundo que queda en el centro. Sin él se centra el mapa:
+   * pasa un instante, antes de que llegue el jugador propio.
+   */
+  focus: Point | null;
 }
 
 /** Carácter con el que el servidor marca una pared. */
@@ -309,6 +326,7 @@ export function renderLobby(
     corner = null,
     character = null,
     vision = null,
+    viewport = null,
   }: RenderOptions,
 ): Origin | null {
   const context = canvas.getContext('2d');
@@ -329,15 +347,18 @@ export function renderLobby(
     left: Math.max(...salientes.map((s) => s.left)),
   });
 
-  if (canvas.width !== bounds.width) canvas.width = bounds.width;
-  if (canvas.height !== bounds.height) canvas.height = bounds.height;
+  const origen = viewport ? encuadre(viewport, bounds) : { minX: bounds.minX, minY: bounds.minY };
+  const ancho = viewport?.width ?? bounds.width;
+  const alto = viewport?.height ?? bounds.height;
+  if (canvas.width !== ancho) canvas.width = ancho;
+  if (canvas.height !== alto) canvas.height = alto;
 
   context.setTransform(1, 0, 0, 1, 0, 0);
   context.fillStyle = '#0c1014';
   context.fillRect(0, 0, canvas.width, canvas.height);
   // La columna 0 queda a la derecha del todo y las paredes suben por encima
   // de la fila 0, así que la grilla arranca en coordenadas negativas.
-  context.translate(-bounds.minX, -bounds.minY);
+  context.translate(-origen.minX, -origen.minY);
 
   // Un jugador puede estar en cualquier celda; se indexan para intercalarlos.
   const jugadores: Array<{ player: LobbyPlayer; sessionId: string }> = [];
@@ -412,5 +433,15 @@ export function renderLobby(
       drawPlayer(context, player, sessionId === ownSessionId, character ? character(player, sessionId) : null);
     }
   }
-  return { minX: bounds.minX, minY: bounds.minY };
+  return origen;
+}
+
+/**
+ * Dónde queda la esquina de arriba a la izquierda de la cámara, en
+ * coordenadas del mundo. Se redondea: con medio píxel de corrimiento, todo el
+ * pixel art se vería borroso.
+ */
+export function encuadre(viewport: Viewport, mapa: { minX: number; minY: number; width: number; height: number }): Origin {
+  const centro = viewport.focus ?? { x: mapa.minX + mapa.width / 2, y: mapa.minY + mapa.height / 2 };
+  return { minX: Math.round(centro.x - viewport.width / 2), minY: Math.round(centro.y - viewport.height / 2) };
 }
