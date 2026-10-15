@@ -215,8 +215,9 @@ function drawCache(context: CanvasRenderingContext2D, cache: LootCache): void {
   labelCell(context, cache.x, cache.y, cache.looted ? '□' : '■', 'bold 13px system-ui, sans-serif');
 }
 
-/** Una salida abierta. */
+/** Una salida abierta. Sin celda conocida no hay dónde dibujarla. */
 function drawExit(context: CanvasRenderingContext2D, exit: ExitPoint): void {
+  if (exit.x === undefined || exit.y === undefined) return;
   fillDiamond(context, exit.x, exit.y, 'rgba(40, 170, 80, 0.7)');
   labelCell(context, exit.x, exit.y, 'SALIDA', 'bold 9px system-ui, sans-serif');
 }

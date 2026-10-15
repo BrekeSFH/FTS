@@ -90,12 +90,18 @@ export const LootCache = schema(
   'LootCache',
 );
 
-/** Una salida abierta: pisarla saca de la instancia con lo que se lleve. */
+/**
+ * Una salida abierta: pisarla saca de la instancia con lo que se lleve.
+ *
+ * Que hay una y en qué piso lo saben todos: sin ese aviso, encontrarla a
+ * tiempo sería pura suerte. La celda exacta llega recién cuando alguien la
+ * ve, porque hay que ir a buscarla.
+ */
 export const ExitPoint = schema(
   {
     floor: t.uint8(),
-    x: t.uint16(),
-    y: t.uint16(),
+    x: t.uint16().view(),
+    y: t.uint16().view(),
     /** Primera ronda en la que ya no está, para avisar cuánto le queda. */
     closes: t.uint16(),
   },
@@ -107,12 +113,11 @@ export const VaultState = schema(
     width: t.uint16(),
     height: t.uint16(),
     /**
-     * Los pisos de la mazmorra, uno por elemento, en el formato de `map.ts`.
-     *
-     * No hay un `cells` como en el lobby porque no hay un mapa único: cada
-     * uno dibuja el piso en el que está. Todos comparten ancho y alto.
+     * Cuántos pisos tiene la mazmorra. Los mapas no van en el estado: cada
+     * uno recibe por mensaje privado solo lo que ya vio de su piso, para que
+     * no se pueda espiar lo que no exploró. Todos comparten ancho y alto.
      */
-    floors: t.array('string'),
+    floorCount: t.uint8(),
     /**
      * Semilla con la que cada cliente elige sus tiles.
      *
@@ -129,10 +134,18 @@ export const VaultState = schema(
     /**
      * Se llama igual que en el lobby a propósito: el render isométrico y la
      * niebla del cliente sirven para las dos salas sin tocar nada.
+     *
+     * Filtrado por jugador: a cada cliente le llega él mismo y quienes está
+     * viendo en este momento. Al que se pierde de vista se lo deja de mandar,
+     * así nadie puede seguir a otro por detrás de una pared.
      */
-    players: t.map(Combatant),
-    /** Los contenedores de todos los pisos, en un orden fijo. */
-    caches: t.array(LootCache),
+    players: t.map(Combatant).view(),
+    /**
+     * Los contenedores de todos los pisos, en un orden fijo del lado del
+     * servidor. A cada cliente le llegan los que ya vio, y se los sigue
+     * mandando aunque deje de verlos: es parte del mapa que recuerda.
+     */
+    caches: t.array(LootCache).view(),
     /** Las salidas abiertas en esta ronda. Cero o una, por ahora. */
     exits: t.array(ExitPoint),
   },

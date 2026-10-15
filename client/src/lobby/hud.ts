@@ -39,7 +39,7 @@ export function turnHud(state: LobbyState | null, me: LobbyPlayer | null | undef
   if (me.party) partes.push(me.party);
   // Con un piso solo no hay nada que decir; con varios, es lo que hace falta
   // para saber cuánto falta bajar.
-  const pisos = state.floors?.length ?? 1;
+  const pisos = state.floorCount ?? 1;
   if (pisos > 1) partes.push(`piso ${(me.floor ?? 0) + 1} de ${pisos}`);
   if (me.hp !== undefined && me.maxHp) partes.push(`vida ${me.hp}/${me.maxHp}`);
   if (me.loot !== undefined) partes.push(`botín ${me.loot}`);

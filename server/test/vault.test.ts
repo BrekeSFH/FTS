@@ -111,26 +111,25 @@ describe('la Vault', () => {
     const client = await entrar(room);
 
     expect([room.state.width, room.state.height]).toEqual([VAULT_WIDTH, VAULT_HEIGHT]);
-    expect(room.state.floors).toHaveLength(VAULT_FLOORS);
-    for (const cells of room.state.floors) expect(cells).toHaveLength(VAULT_WIDTH * VAULT_HEIGHT);
+    expect(room.state.floorCount).toBe(VAULT_FLOORS);
+    for (const map of room.floors) expect(map.cells).toHaveLength(VAULT_WIDTH * VAULT_HEIGHT);
     expect(room.state.players.get(client.sessionId)!.floor, 'se entra por arriba').toBe(0);
     expect(room.state.round).toBe(1);
     expect(room.state.players.get(client.sessionId)!.ap).toBe(AP_POR_TURNO);
   });
 
-  it('el cliente recibe los pisos y en cuál está cada uno', async () => {
-    // El cliente indexa `floors` como un arreglo; esto comprueba que el SDK
-    // lo decodifica así y no como algo que haya que recorrer.
+  it('el cliente recibe cuántos pisos hay y en cuál está, pero no los mapas', async () => {
     const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const client = await entrar(room);
     await room.waitForNextPatch();
 
     const state = client.state as unknown as {
-      floors: ArrayLike<string>;
+      floorCount: number;
+      floors?: unknown;
       players: Map<string, { floor: number }>;
     };
-    expect(state.floors.length).toBe(VAULT_FLOORS);
-    expect(state.floors[1]).toBe(room.mapOf(1).cells);
+    expect(state.floorCount).toBe(VAULT_FLOORS);
+    expect(state.floors, 'el mapa no viaja en el estado').toBeUndefined();
     expect(state.players.get(client.sessionId)!.floor).toBe(0);
   });
 
@@ -161,7 +160,7 @@ describe('la Vault', () => {
       await entrar(room);
       await entrar(room);
       const out = {
-        floors: [...room.state.floors],
+        floors: room.floors.map((f) => f.cells),
         iniciativas: [...room.state.players.values()].map((c) => c.initiative),
       };
       await room.disconnect();

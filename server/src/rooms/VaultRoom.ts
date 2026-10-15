@@ -30,6 +30,7 @@ import { DEFAULT_FACING, facingFromStep } from './direction';
 import {
   STAIRS_DOWN,
   STAIRS_UP,
+  WALL,
   floorCells,
   generateDungeon,
   isBlocked,
@@ -51,7 +52,7 @@ import {
   type CombatantType,
   type VaultStateType,
 } from './vaultState';
-import { SIGHT_RADIUS, visibleMask } from './vision';
+import { SIGHT_RADIUS, isVisible, visibleMask } from './vision';
 
 type VaultRoomOptions = { state: VaultStateType };
 
@@ -185,7 +186,15 @@ export interface VisionMessage {
    * explorado de cada piso: todos tienen el mismo ancho.
    */
   floor: number;
+  /**
+   * Lo que se sabe del mapa de ese piso: lo explorado, tal cual, y todo lo
+   * demás como roca. Es lo único del mapa que llega al cliente.
+   */
+  map: string;
 }
+
+/** Cómo llega lo que todavía no se exploró: roca, que no se dibuja. */
+const DESCONOCIDO = WALL;
 
 export interface MoveMessage {
   dx: number;
@@ -285,6 +294,16 @@ export class VaultRoom extends Room<VaultRoomOptions> {
   /** De qué jugador es cada sesión, para devolverle lo que extraiga. */
   private duenos = new Map<string, string>();
 
+  /**
+   * Lo último que vio cada jugador: de qué piso y qué celdas. Se calcula al
+   * moverse, que es lo único que lo cambia, y con eso se decide a quién le
+   * llega cada combatiente, contenedor y salida.
+   */
+  private mascaras = new Map<string, { floor: number; mask: string }>();
+
+  /** Qué celdas exploró cada jugador, un arreglo por piso. */
+  private explorado = new Map<string, Uint8Array[]>();
+
   /** Para no volver a entrar a los turnos de la IA desde adentro de ellos. */
   private jugandoIA = false;
 
@@ -303,7 +322,7 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     this.state = new VaultState({
       width: VAULT_WIDTH,
       height: VAULT_HEIGHT,
-      floors: new ArraySchema<string>(...this.floors.map((f) => f.cells)),
+      floorCount: this.floors.length,
       tileSeed: seed,
       round: 0,
       remainingMs: 0,
@@ -451,10 +470,12 @@ export class VaultRoom extends Room<VaultRoomOptions> {
       }),
     );
 
-    // La mochila propia se ve; la de los demás, no. Lo que no tiene
-    // etiqueta lo reciben todos igual.
+    // Cada uno se ve a sí mismo, con mochila; a los demás, solo mientras los
+    // tenga a la vista y sin mochila. Ver `actualizarVistas`.
     client.view = new StateView();
-    client.view.add(this.state.players.get(client.sessionId)!, PRIVADO);
+    const propio = this.state.players.get(client.sessionId)!;
+    client.view.add(propio);
+    client.view.add(propio, PRIVADO);
 
     const now = Date.now();
     this.turns = this.turns
@@ -472,6 +493,8 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     // Irse sin extraer pierde todo, como pide el punto 4: lo que llevaba ya
     // había salido del alijo.
     this.duenos.delete(client.sessionId);
+    this.mascaras.delete(client.sessionId);
+    this.explorado.delete(client.sessionId);
     this.state.players.delete(client.sessionId);
     if (this.turns) this.turns = leave(this.turns, client.sessionId, Date.now());
     // Si no se suelta, el id de la vista puede reusarse con lo que veía.
@@ -660,6 +683,37 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     const now = Date.now();
     const quedan = [...this.state.players.keys()].map((id) => remainingMs(this.turns!, id, now));
     this.state.remainingMs = quedan.length > 0 ? Math.max(...quedan) : 0;
+    this.actualizarVistas();
+  }
+
+  /**
+   * Decide qué le llega a cada cliente: los combatientes que está viendo, los
+   * contenedores que vio alguna vez y dónde está la salida si la vio.
+   *
+   * Corre en cada publicación porque lo que cambia no es solo lo propio: si
+   * otro camina hasta quedar a la vista, el que mira no se movió.
+   */
+  private actualizarVistas(): void {
+    for (const client of this.clients) {
+      const view = client.view;
+      const mirada = this.mascaras.get(client.sessionId);
+      if (!view || !mirada) continue;
+      const seVe = (floor: number, x: number, y: number) =>
+        floor === mirada.floor && isVisible(mirada.mask, VAULT_WIDTH, x, y);
+
+      for (const [id, c] of this.state.players) {
+        if (id === client.sessionId) continue;
+        const debe = seVe(c.floor, c.x, c.y);
+        if (debe && !view.has(c)) view.add(c);
+        else if (!debe && view.has(c)) view.remove(c);
+      }
+      for (const cache of this.state.caches) {
+        if (!view.has(cache) && seVe(cache.floor, cache.x, cache.y)) view.add(cache);
+      }
+      for (const exit of this.state.exits) {
+        if (!view.has(exit) && seVe(exit.floor, exit.x, exit.y)) view.add(exit);
+      }
+    }
   }
 
   /** Si empezó una ronda: se la publica y a todos se les repone la acción. */
@@ -1040,11 +1094,41 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     return visibleMask(this.mapOf(c.floor), c.x, c.y, SIGHT_RADIUS);
   }
 
+  /**
+   * Le manda a un cliente lo que ve y lo que sabe de su piso, y lo anota
+   * para decidir qué más le llega del estado.
+   */
   private sendVision(client: Client): void {
     const c = this.state.players.get(client.sessionId);
     const cells = this.visionFor(client.sessionId);
     if (!c || !cells) return;
-    client.send(VISION_MESSAGE, { width: VAULT_WIDTH, cells, floor: c.floor } satisfies VisionMessage);
+    this.mascaras.set(client.sessionId, { floor: c.floor, mask: cells });
+    const map = this.explorar(client.sessionId, c.floor, cells);
+    client.send(VISION_MESSAGE, { width: VAULT_WIDTH, cells, floor: c.floor, map } satisfies VisionMessage);
+  }
+
+  /**
+   * Suma a lo explorado lo que se ve ahora y devuelve el mapa del piso como
+   * lo conoce ese jugador: lo explorado tal cual y el resto como roca.
+   */
+  knownMap(sessionId: string, floor: number): string {
+    const visto = this.explorado.get(sessionId)?.[floor];
+    const real = this.mapOf(floor).cells;
+    if (!visto) return DESCONOCIDO.repeat(real.length);
+    let out = '';
+    for (let i = 0; i < real.length; i++) out += visto[i] ? real[i] : DESCONOCIDO;
+    return out;
+  }
+
+  private explorar(sessionId: string, floor: number, mask: string): string {
+    let pisos = this.explorado.get(sessionId);
+    if (!pisos) {
+      pisos = this.floors.map((f) => new Uint8Array(f.cells.length));
+      this.explorado.set(sessionId, pisos);
+    }
+    const visto = pisos[floor];
+    for (let i = 0; i < mask.length; i++) if (mask[i] === '1') visto[i] = 1;
+    return this.knownMap(sessionId, floor);
   }
 
   /**

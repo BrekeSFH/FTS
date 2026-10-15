@@ -100,6 +100,11 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
    * así que lo explorado de la anterior no significa nada.
    */
   let fogs = new Map<number, Fog>();
+  /**
+   * Lo que se sabe del mapa de cada piso, como lo mandó el servidor la última
+   * vez. Es lo único del mapa que llega en la Vault.
+   */
+  let mapas = new Map<number, string>();
   const fogOf = (floor: number): Fog => {
     let fog = fogs.get(floor);
     if (!fog) fogs.set(floor, (fog = createFog()));
@@ -209,7 +214,7 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     // resuelve enseguida.
     if (!room?.state?.players) return;
     const fog = fogOf(ownFloor(room.state, room.sessionId));
-    origen = renderLobby(ui.canvas, floorView(room.state, room.sessionId), {
+    origen = renderLobby(ui.canvas, floorView(room.state, room.sessionId, mapas), {
       ownSessionId: room.sessionId,
       floors,
       wall,
@@ -396,8 +401,10 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
         setStatus(`Conectado como ${joined.sessionId}.`);
 
         fogs = new Map();
-        onVision(joined, ({ width, cells, floor }) => {
+        mapas = new Map();
+        onVision(joined, ({ width, cells, floor, map }) => {
           fogOf(floor ?? 0).update(cells, width);
+          if (map !== undefined) mapas.set(floor ?? 0, map);
           draw();
         });
         // El servidor ya la empujó al entrar, pero ese empujón pudo salir
@@ -480,7 +487,7 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     if (!room?.state?.players || !origen) return;
     if (!turnHud(room.state, room.state.players.get(room.sessionId)).canMove) return;
     const punto = toWorld(event.offsetX, event.offsetY, ui.canvas, origen);
-    const blanco = playerAt(floorView(room.state, room.sessionId), punto, room.sessionId);
+    const blanco = playerAt(floorView(room.state, room.sessionId, mapas), punto, room.sessionId);
     if (blanco) sendAttack(room, blanco.sessionId);
   });
 

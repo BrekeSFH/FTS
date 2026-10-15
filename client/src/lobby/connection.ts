@@ -27,6 +27,12 @@ export interface VisionMessage {
   cells: string;
   /** De qué piso es la máscara. Solo en la Vault; el lobby tiene uno solo. */
   floor?: number;
+  /**
+   * Lo que se sabe del mapa de ese piso: lo explorado tal cual y el resto
+   * como roca. Solo en la Vault, que no manda el mapa en el estado para que
+   * no se pueda espiar lo que no se exploró.
+   */
+  map?: string;
 }
 
 /**
@@ -155,11 +161,16 @@ export interface LootCache {
   looted: boolean;
 }
 
-/** Una salida abierta. Pisarla saca de la instancia con el botín. */
+/**
+ * Una salida abierta. Pisarla saca de la instancia con el botín.
+ *
+ * El piso y cuándo cierra llegan siempre. La celda llega recién cuando se la
+ * ve: hasta entonces `x` e `y` vienen sin definir.
+ */
 export interface ExitPoint {
   floor: number;
-  x: number;
-  y: number;
+  x?: number;
+  y?: number;
   /** Primera ronda en la que ya no está. */
   closes: number;
 }
@@ -184,12 +195,12 @@ export interface LobbyState {
   height: number;
   /**
    * El mapa: una celda por carácter, fila por fila. `#` es pared, `>` baja
-   * al piso siguiente y `<` sube al anterior. La Vault no lo manda, porque
-   * tiene varios; `floorView` lo completa con el piso propio.
+   * al piso siguiente y `<` sube al anterior. La Vault no lo manda: cada uno
+   * recibe lo que exploró por el mensaje de visión, y `floorView` lo completa.
    */
   cells?: string;
-  /** Los pisos de la mazmorra, en el mismo formato. Solo en la Vault. */
-  floors?: ArrayLike<string>;
+  /** Cuántos pisos tiene la mazmorra. Solo en la Vault. */
+  floorCount?: number;
   /** Los contenedores de todos los pisos. Solo en la Vault. */
   caches?: ArrayLike<LootCache>;
   /** Las salidas abiertas en esta ronda. Solo en la Vault. */
