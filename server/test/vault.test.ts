@@ -11,6 +11,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { VAULT_ROOM, createServer } from '../src/createServer';
 import { FLOOR, isBlocked } from '../src/rooms/map';
 import { SIGHT_RADIUS, visibleMask } from '../src/rooms/vision';
+import { ENEMY_PARTY } from '../src/rooms/ai';
 import { AP_DISPARO, HP_MAX } from '../src/rooms/combat';
 import { PRIMERA_SALIDA, exitAt } from '../src/rooms/loot';
 import {
@@ -102,7 +103,7 @@ describe('sanitizeParty', () => {
 
 describe('la Vault', () => {
   it('publica el mapa y abre la ronda 1 con el primero que entra', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const client = await entrar(room);
 
     expect([room.state.width, room.state.height]).toEqual([VAULT_WIDTH, VAULT_HEIGHT]);
@@ -116,7 +117,7 @@ describe('la Vault', () => {
   it('el cliente recibe los pisos y en cuál está cada uno', async () => {
     // El cliente indexa `floors` como un arreglo; esto comprueba que el SDK
     // lo decodifica así y no como algo que haya que recorrer.
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const client = await entrar(room);
     await room.waitForNextPatch();
 
@@ -130,7 +131,7 @@ describe('la Vault', () => {
   });
 
   it('reparte parties distintas para que haya dos bandos', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const uno = await entrar(room);
     const dos = await entrar(room);
 
@@ -140,7 +141,7 @@ describe('la Vault', () => {
   });
 
   it('reparte la Iniciativa en el rango de un d20', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     await entrar(room);
     await entrar(room);
 
@@ -152,7 +153,7 @@ describe('la Vault', () => {
 
   it('con la misma semilla sale el mismo mapa y las mismas tiradas', async () => {
     const tirar = async () => {
-      const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 99 });
+      const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 99, enemies: false });
       await entrar(room);
       await entrar(room);
       const out = {
@@ -168,13 +169,13 @@ describe('la Vault', () => {
 
 describe('el turno', () => {
   it('quien está solo puede actuar enseguida', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const client = await entrar(room);
     expect(room.state.players.get(client.sessionId)!.active).toBe(true);
   });
 
   it('un paso gasta un punto de acción', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const client = await entrar(room);
     const yo = room.state.players.get(client.sessionId)!;
 
@@ -185,7 +186,7 @@ describe('el turno', () => {
   });
 
   it('al gastar el último punto el turno se cierra solo', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const client = await entrar(room);
     const yo = room.state.players.get(client.sessionId)!;
 
@@ -204,7 +205,7 @@ describe('el turno', () => {
   });
 
   it('sin acción no se mueve', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const client = await entrar(room);
     const yo = room.state.players.get(client.sessionId)!;
     yo.ap = 0;
@@ -214,7 +215,7 @@ describe('el turno', () => {
   });
 
   it('la ronda nueva repone la acción de todos', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const client = await entrar(room);
     const yo = room.state.players.get(client.sessionId)!;
 
@@ -229,7 +230,7 @@ describe('el turno', () => {
   });
 
   it('cerrar el turno de otro no hace nada', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     await entrar(room);
     expect(room.endTurn('intruso')).toBe(false);
   });
@@ -241,7 +242,7 @@ describe('la Iniciativa entre parties', () => {
    * ven seguro y el grupo de contacto es el mismo todo el test.
    */
   async function enContacto() {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const uno = await entrar(room);
     const dos = await entrar(room);
     sincronizarRonda(room);
@@ -302,7 +303,7 @@ describe('la Iniciativa entre parties', () => {
 
 describe('la visión en la Vault', () => {
   it('la máscara cubre el mapa y marca la celda propia', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const client = await entrar(room);
     const yo = room.state.players.get(client.sessionId)!;
 
@@ -312,14 +313,14 @@ describe('la visión en la Vault', () => {
   });
 
   it('no hay máscara para quien no está en la sala', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     expect(room.visionFor('nadie')).toBeNull();
   });
 });
 
 describe('entradas y salidas', () => {
   it('el que entra no traba la ronda de los que ya estaban', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const uno = await entrar(room);
     room.endTurn(uno.sessionId);
     room.publish();
@@ -331,7 +332,7 @@ describe('entradas y salidas', () => {
   });
 
   it('el que se va no deja la ronda esperándolo', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const uno = await entrar(room);
     const dos = await entrar(room);
     sincronizarRonda(room);
@@ -367,7 +368,7 @@ describe('los pisos de la Vault', () => {
   }
 
   it('pisar la escalera de bajada lleva a la de subida del piso siguiente', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const client = await entrar(room);
     const paso = pararAlLado(room, client.sessionId, 0, room.mapOf(0).down!);
 
@@ -379,7 +380,7 @@ describe('los pisos de la Vault', () => {
   });
 
   it('y la de subida devuelve a la de bajada del anterior', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const client = await entrar(room);
     const paso = pararAlLado(room, client.sessionId, 1, room.mapOf(1).up!);
 
@@ -390,7 +391,7 @@ describe('los pisos de la Vault', () => {
   });
 
   it('si la llegada está ocupada aparece en la celda libre más cercana', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const uno = await entrar(room);
     const dos = await entrar(room);
     sincronizarRonda(room);
@@ -409,7 +410,7 @@ describe('los pisos de la Vault', () => {
   });
 
   it('dos en la misma celda de pisos distintos no se estorban', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const uno = await entrar(room);
     const yo = room.state.players.get(uno.sessionId)!;
     expect(room.isOccupied(0, yo.x, yo.y)).toBe(true);
@@ -417,7 +418,7 @@ describe('los pisos de la Vault', () => {
   });
 
   it('parties en pisos distintos no entran en contacto', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const uno = await entrar(room);
     const dos = await entrar(room);
     sincronizarRonda(room);
@@ -434,7 +435,7 @@ describe('los pisos de la Vault', () => {
   });
 
   it('la máscara es la del piso en el que se está', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const client = await entrar(room);
     const paso = pararAlLado(room, client.sessionId, 0, room.mapOf(0).down!);
     room.tryMove(client.sessionId, paso);
@@ -457,7 +458,7 @@ describe('saqueo y extracción', () => {
   }
 
   it('abrir un contenedor al lado suma su valor y cuesta acción', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const client = await entrar(room);
     const cache = room.caches[0];
     const c = room.state.players.get(client.sessionId)!;
@@ -474,7 +475,7 @@ describe('saqueo y extracción', () => {
   });
 
   it('no se saquea de lejos, desde otro piso ni sin acción', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const client = await entrar(room);
     const cache = room.caches[0];
     const c = room.state.players.get(client.sessionId)!;
@@ -497,12 +498,12 @@ describe('saqueo y extracción', () => {
   });
 
   it('el valor del contenedor no viaja en el estado', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     expect(Object.keys(room.state.caches[0].toJSON()).sort()).toEqual(['floor', 'looted', 'x', 'y']);
   });
 
   it('las salidas se publican según la ronda', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     await entrar(room);
     expect(room.state.exits).toHaveLength(0);
 
@@ -521,7 +522,7 @@ describe('saqueo y extracción', () => {
   });
 
   it('pisar una salida abierta saca de la instancia con el botín', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const client = await entrar(room);
     let avisado: ExtractedMessage | null = null;
     client.onMessage(EXTRACTED_MESSAGE, (m: ExtractedMessage) => (avisado = m));
@@ -551,7 +552,7 @@ describe('saqueo y extracción', () => {
   });
 
   it('quien se va sin extraer no se lleva nada', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const client = await entrar(room);
     // Alguien más se queda: con la sala vacía, Colyseus la cierra y no hay
     // parche que esperar.
@@ -585,7 +586,7 @@ describe('disparos y muerte', () => {
   }
 
   it('entran con la vida entera', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const client = await entrar(room);
     const c = room.state.players.get(client.sessionId)!;
     expect(c.hp).toBe(HP_MAX);
@@ -593,7 +594,7 @@ describe('disparos y muerte', () => {
   });
 
   it('un disparo cuesta acción y, si pega, saca vida', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const { tira, recibe } = await duelo(room);
     const tirador = room.state.players.get(tira.sessionId)!;
     const blanco = room.state.players.get(recibe.sessionId)!;
@@ -608,7 +609,7 @@ describe('disparos y muerte', () => {
   });
 
   it('no se dispara sin turno, sin acción, a uno mismo ni a otro piso', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const { tira, recibe } = await duelo(room);
     expect(room.tryAttack(recibe.sessionId, tira.sessionId), 'sin turno').toBeNull();
     expect(room.tryAttack(tira.sessionId, tira.sessionId), 'a sí mismo').toBeNull();
@@ -624,7 +625,7 @@ describe('disparos y muerte', () => {
   });
 
   it('el fuego amigo vale', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const uno = await entrar(room, { party: PARTIES[0] });
     const dos = await entrar(room, { party: PARTIES[0] });
     sincronizarRonda(room);
@@ -636,7 +637,7 @@ describe('disparos y muerte', () => {
   });
 
   it('al morir deja el botín en el piso y sale de la sala', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const { tira, recibe } = await duelo(room);
     let avisado: DiedMessage | null = null;
     recibe.onMessage(DIED_MESSAGE, (m: DiedMessage) => (avisado = m));
@@ -668,7 +669,7 @@ describe('disparos y muerte', () => {
   });
 
   it('quien muere sin botín no deja contenedor', async () => {
-    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
     const { tira, recibe } = await duelo(room);
     const tirador = room.state.players.get(tira.sessionId)!;
     room.state.players.get(recibe.sessionId)!.hp = 1;
@@ -679,5 +680,124 @@ describe('disparos y muerte', () => {
     }
     expect(room.state.players.has(recibe.sessionId)).toBe(false);
     expect(room.caches).toHaveLength(contenedores);
+  });
+});
+
+describe('los enemigos', () => {
+  /** Lleva a un jugador al lado de un enemigo, en su piso. */
+  function alLado(room: VaultRoom, sessionId: string, enemigo: string) {
+    const e = room.state.players.get(enemigo)!;
+    const map = room.mapOf(e.floor);
+    const paso = [
+      { dx: 1, dy: 0 },
+      { dx: -1, dy: 0 },
+      { dx: 0, dy: 1 },
+      { dx: 0, dy: -1 },
+    ].find(({ dx, dy }) => map.cells[(e.y + dy) * map.width + e.x + dx] === FLOOR && !room.isOccupied(e.floor, e.x + dx, e.y + dy))!;
+    Object.assign(room.state.players.get(sessionId)!, { floor: e.floor, x: e.x + paso.dx, y: e.y + paso.dy });
+  }
+
+  /** Cierra el turno de los jugadores para que empiece la ronda siguiente. */
+  function rondaSiguiente(room: VaultRoom) {
+    const ronda = room.state.round;
+    for (let i = 0; i < 10 && room.state.round === ronda; i++) {
+      for (const id of room.humanos()) room.endTurn(id);
+      room.publish();
+    }
+  }
+
+  it('están en el estado, con su party, y entran al reloj con el primero', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const enemigos = room.enemigos();
+    expect(enemigos).toHaveLength(1 + 2 + 3);
+    for (const id of enemigos) expect(room.state.players.get(id)!.party).toBe(ENEMY_PARTY);
+
+    const client = await entrar(room);
+    expect(room.turns!.participants).toEqual(expect.arrayContaining([...enemigos, client.sessionId]));
+    expect(room.humanos()).toEqual([client.sessionId]);
+  });
+
+  it('fuera de contacto juegan y cierran en el acto', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    await entrar(room);
+    // Los de los pisos de abajo no pueden ver a nadie: ya cerraron.
+    for (const id of room.enemigos()) {
+      const e = room.state.players.get(id)!;
+      if (e.floor > 0) expect(e.done, id).toBe(true);
+    }
+  });
+
+  it('si ven a alguien le disparan, ronda tras ronda', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const client = await entrar(room);
+    const enemigo = room.enemigos().find((id) => room.state.players.get(id)!.floor === 1)!;
+    // En el piso hay más de un enemigo: se cuentan solo los de este.
+    let disparos = 0;
+    client.onMessage(SHOT_MESSAGE, (m: { from: string }) => {
+      if (m.from === enemigo) disparos++;
+    });
+    const yo = room.state.players.get(client.sessionId)!;
+    yo.hp = 250;
+    alLado(room, client.sessionId, enemigo);
+
+    rondaSiguiente(room);
+    const e = room.state.players.get(enemigo)!;
+    expect(e.ap, 'gastó todo en dos disparos').toBe(AP_POR_TURNO - 2 * AP_DISPARO);
+    const tras1 = yo.hp;
+
+    // La segunda ronda prueba que la acción se repone antes de que juegue.
+    rondaSiguiente(room);
+    expect(e.ap).toBe(AP_POR_TURNO - 2 * AP_DISPARO);
+    expect(yo.hp).toBeLessThan(250);
+    expect(yo.hp).toBeLessThanOrEqual(tras1);
+    await room.waitForNextPatch();
+    expect(disparos).toBe(4);
+  });
+
+  it('va a buscar a quien perdió de vista', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const client = await entrar(room);
+    client.onMessage(SHOT_MESSAGE, () => {});
+    const enemigo = room.enemigos().find((id) => room.state.players.get(id)!.floor === 1)!;
+    const yo = room.state.players.get(client.sessionId)!;
+    yo.hp = 250;
+    alLado(room, client.sessionId, enemigo);
+    rondaSiguiente(room);
+    const visto = { x: yo.x, y: yo.y };
+
+    // Se va a otro piso: el enemigo ya no lo ve y va adonde lo vio.
+    yo.floor = 2;
+    rondaSiguiente(room);
+    const e = room.state.players.get(enemigo)!;
+    expect({ x: e.x, y: e.y }).toEqual(visto);
+  });
+
+  it('matar a uno deja su botín en el piso, y no cuenta como un jugador caído', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const client = await entrar(room);
+    client.onMessage(SHOT_MESSAGE, () => {});
+    const enemigo = room.enemigos().find((id) => room.state.players.get(id)!.floor === 1)!;
+    const e = room.state.players.get(enemigo)!;
+    const { x, y, loot } = e;
+    const yo = room.state.players.get(client.sessionId)!;
+    yo.hp = 250;
+    alLado(room, client.sessionId, enemigo);
+    rondaSiguiente(room);
+    e.hp = 1;
+    const contenedores = room.caches.length;
+
+    for (let i = 0; i < 20 && room.state.players.has(enemigo); i++) {
+      yo.ap = AP_POR_TURNO;
+      if (!room.tryAttack(client.sessionId, enemigo)) rondaSiguiente(room);
+    }
+    expect(room.state.players.has(enemigo)).toBe(false);
+    expect(room.caches[contenedores]).toEqual({ floor: 1, x, y, value: loot });
+    expect(room.fallen).toEqual([]);
+    expect(room.turns!.participants).not.toContain(enemigo);
+  });
+
+  it('sin jugadores no juegan', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    expect(room.runAI()).toBe(false);
   });
 });

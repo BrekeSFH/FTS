@@ -10,6 +10,7 @@
  * decide. Acá además decide si siquiera le toca.
  */
 import { Client, Room } from '@colyseus/core';
+import { ENEMY_PARTY, esEnemigo, nextStep, placeEnemies } from './ai';
 import { AP_DISPARO, DANO_MAXIMO, DANO_MINIMO, HP_MAX, canShoot, hitChance, resolveShot } from './combat';
 import { whoCanAct, type Combatant as Luchador } from './contact';
 import { DEFAULT_FACING, facingFromStep } from './direction';
@@ -197,10 +198,30 @@ export class VaultRoom extends Room<VaultRoomOptions> {
    */
   extracted: Extraction[] = [];
 
-  /** Quiénes murieron y cuánto dejaron. Lo mismo: para cuando exista el alijo. */
+  /**
+   * Jugadores que murieron y cuánto dejaron. Lo mismo: para cuando exista el
+   * alijo. Los enemigos no van acá, no tienen alijo.
+   */
   fallen: Extraction[] = [];
 
-  override onCreate(options: { seed?: number } = {}): void {
+  /** Cuánto botín perdió cada muerto, para avisarle antes de sacarlo. */
+  private botinPerdido = new Map<string, number>();
+
+  /**
+   * Dónde vio cada enemigo a alguien por última vez. Es adonde va cuando lo
+   * pierde de vista; al llegar sin encontrar a nadie, se olvida.
+   */
+  private rastro = new Map<string, Cell>();
+
+  /** Para no volver a entrar a los turnos de la IA desde adentro de ellos. */
+  private jugandoIA = false;
+
+  /**
+   * `enemies: false` deja la mazmorra vacía. Es para los tests de reglas que
+   * no son de la IA: con enemigos, cualquier prueba de turnos depende de
+   * quién vea a quién desde la otra punta del mapa.
+   */
+  override onCreate(options: { seed?: number; enemies?: boolean } = {}): void {
     const seed = options.seed ?? randomSeed();
     this.floors = generateDungeon(VAULT_WIDTH, VAULT_HEIGHT, seed, VAULT_FLOORS, MAP_OPTIONS);
     this.siguienteTirada = seed;
@@ -221,6 +242,30 @@ export class VaultRoom extends Room<VaultRoomOptions> {
       exits: [],
     });
 
+    if (options.enemies !== false) {
+      for (const e of placeEnemies(this.floors, seed)) {
+        this.state.players.set(
+          e.id,
+          new Combatant({
+            x: e.x,
+            y: e.y,
+            floor: e.floor,
+            name: 'Saqueador',
+            hue: 0,
+            facing: DEFAULT_FACING,
+            party: ENEMY_PARTY,
+            initiative: this.tirar(20),
+            ap: AP_POR_TURNO,
+            done: false,
+            active: false,
+            loot: e.loot,
+            hp: e.hp,
+            maxHp: e.hp,
+          }),
+        );
+      }
+    }
+
     this.onMessage('move', (client, message: MoveMessage) => {
       if (this.tryMove(client.sessionId, message)) {
         const loot = this.extractIfOnExit(client.sessionId);
@@ -237,17 +282,7 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     this.onMessage('attack', (client, message: AttackMessage) => {
       const target = typeof message?.target === 'string' ? message.target : '';
       const resultado = this.tryAttack(client.sessionId, target);
-      if (resultado) {
-        for (const id of new Set([resultado.from, resultado.to])) {
-          this.clients.getById(id)?.send(SHOT_MESSAGE, resultado);
-        }
-        if (resultado.killed) {
-          const muerto = this.clients.getById(resultado.to);
-          const caido = this.fallen[this.fallen.length - 1];
-          muerto?.send(DIED_MESSAGE, { loot: caido.loot, by: resultado.fromName } satisfies DiedMessage);
-          muerto?.leave();
-        }
-      }
+      if (resultado) this.announceShot(resultado);
       this.publish();
     });
 
@@ -275,7 +310,7 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     const spawn = this.findFreeCell(0);
     if (!spawn) throw new Error('No hay celdas libres en la Vault');
 
-    const n = this.state.players.size;
+    const n = this.humanos().length;
     this.state.players.set(
       client.sessionId,
       new Combatant({
@@ -301,7 +336,9 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     const now = Date.now();
     this.turns = this.turns
       ? join(this.turns, client.sessionId, now)
-      : startInstance([client.sessionId], TURNO_MS, now);
+      : // Los enemigos entran al reloj con el primero: sin jugadores no
+        // hay ronda, y sin ronda la IA no tiene cuándo jugar.
+        startInstance([...this.enemigos(), client.sessionId], TURNO_MS, now);
 
     this.publish();
     this.sendVision(client);
@@ -384,7 +421,9 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     const muerto = this.state.players.get(sessionId);
     if (!muerto) return;
     const { name, party, loot, floor, x, y } = muerto;
-    this.fallen.push({ name, party, loot });
+    if (!esEnemigo(sessionId)) this.fallen.push({ name, party, loot });
+    this.botinPerdido.set(sessionId, loot);
+    this.rastro.delete(sessionId);
     if (loot > 0) {
       this.caches.push({ floor, x, y, value: loot });
       this.state.caches.push(new LootCache({ floor, x, y, looted: false }));
@@ -439,12 +478,11 @@ export class VaultRoom extends Room<VaultRoomOptions> {
       return;
     }
 
-    if (this.state.round !== this.turns.round) {
-      // Ronda nueva: a todos se les repone la acción.
-      this.state.round = this.turns.round;
-      for (const [, c] of this.state.players) c.ap = AP_POR_TURNO;
-      this.publishExits();
-    }
+    // La IA juega después de reponer la acción de la ronda, no antes: si no,
+    // arrancaría cada ronda con lo que le sobró de la anterior. Y si al
+    // cerrar ella se abre otra ronda, se repone y vuelve a jugar.
+    this.syncRound();
+    for (let vuelta = 0; vuelta < 10 && this.runAI(); vuelta++) this.syncRound();
 
     const pendientes = new Set(this.turns.pending);
     const activos = this.activos();
@@ -459,6 +497,110 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     const now = Date.now();
     const quedan = [...this.state.players.keys()].map((id) => remainingMs(this.turns!, id, now));
     this.state.remainingMs = quedan.length > 0 ? Math.max(...quedan) : 0;
+  }
+
+  /** Si empezó una ronda: se la publica y a todos se les repone la acción. */
+  private syncRound(): void {
+    if (!this.turns || this.state.round === this.turns.round) return;
+    this.state.round = this.turns.round;
+    for (const [, c] of this.state.players) c.ap = AP_POR_TURNO;
+    this.publishExits();
+  }
+
+  /** Las sesiones de los jugadores, sin los enemigos. */
+  humanos(): string[] {
+    return [...this.state.players.keys()].filter((id) => !esEnemigo(id));
+  }
+
+  /** Los enemigos que siguen vivos. */
+  enemigos(): string[] {
+    return [...this.state.players.keys()].filter(esEnemigo);
+  }
+
+  /**
+   * Avisa un disparo a los que estuvieron en él y, si alguien murió, se lo
+   * dice y lo saca. Los enemigos no tienen conexión: con ellos no hay a
+   * quién avisar.
+   */
+  private announceShot(resultado: ShotMessage): void {
+    for (const id of new Set([resultado.from, resultado.to])) {
+      this.clients.getById(id)?.send(SHOT_MESSAGE, resultado);
+    }
+    if (!resultado.killed) return;
+    const muerto = this.clients.getById(resultado.to);
+    const loot = this.botinPerdido.get(resultado.to) ?? 0;
+    muerto?.send(DIED_MESSAGE, { loot, by: resultado.fromName } satisfies DiedMessage);
+    muerto?.leave();
+  }
+
+  /**
+   * Juega los turnos de los enemigos a los que les toca.
+   *
+   * Se llama al publicar, que es por donde pasa todo cambio: una ronda nueva,
+   * un turno que se cierra, alguien que entra o se va. Cada enemigo juega y
+   * cierra; si al cerrar le toca a otro enemigo, se sigue. Termina porque
+   * cerrar saca de los pendientes, y cada uno juega una vez por ronda.
+   * Devuelve si alguno jugó.
+   */
+  runAI(): boolean {
+    // Sin jugadores no se juega: la IA sola cerraría ronda tras ronda.
+    if (this.jugandoIA || !this.turns || this.humanos().length === 0) return false;
+    this.jugandoIA = true;
+    let jugo = false;
+    try {
+      const ronda = this.turns.round;
+      for (let vuelta = 0; vuelta < 1000; vuelta++) {
+        // Si se abrió otra ronda, se corta: hay que reponer la acción antes
+        // de seguir, y eso lo hace quien llamó.
+        if (this.turns.round !== ronda) break;
+        const activos = this.activos();
+        const id = this.enemigos().find((e) => activos.has(e));
+        if (!id) break;
+        this.playEnemy(id);
+        jugo = true;
+        // Su último disparo o paso pudo haber cerrado el turno, y con él la
+        // ronda. Cerrarlo de nuevo acá cerraría el de la ronda nueva, sin
+        // haberlo jugado.
+        if (this.turns.round === ronda && this.turns.pending.includes(id)) this.endTurn(id);
+      }
+    } finally {
+      this.jugandoIA = false;
+    }
+    return jugo;
+  }
+
+  /** El turno de un enemigo: disparar si ve a alguien, si no ir a buscarlo. */
+  private playEnemy(id: string): void {
+    for (let accion = 0; accion < AP_POR_TURNO * 2; accion++) {
+      const yo = this.state.players.get(id);
+      if (!yo || yo.ap <= 0) return;
+      const map = this.mapOf(yo.floor);
+
+      const blanco = this.humanos()
+        .map((h) => ({ h, c: this.state.players.get(h)! }))
+        .filter(({ c }) => canShoot(map, yo, c))
+        .sort((a, b) => Math.hypot(a.c.x - yo.x, a.c.y - yo.y) - Math.hypot(b.c.x - yo.x, b.c.y - yo.y))[0];
+
+      if (blanco) {
+        this.rastro.set(id, { x: blanco.c.x, y: blanco.c.y });
+        // Sin acción para un disparo, se queda: acercarse a alguien que ya
+        // tiene a tiro solo lo expondría más.
+        if (yo.ap < AP_DISPARO) return;
+        const resultado = this.tryAttack(id, blanco.h);
+        if (!resultado) return;
+        this.announceShot(resultado);
+        continue;
+      }
+
+      const destino = this.rastro.get(id);
+      if (!destino) return;
+      const paso = nextStep(map, yo, destino, (x, y) => this.isOccupied(yo.floor, x, y));
+      if (!paso || !this.tryMove(id, paso)) {
+        this.rastro.delete(id);
+        return;
+      }
+      if (yo.x === destino.x && yo.y === destino.y) this.rastro.delete(id);
+    }
   }
 
   /** Vuelca al estado la salida de la ronda en curso, si hay una. */
@@ -631,7 +773,7 @@ export class VaultRoom extends Room<VaultRoomOptions> {
   private findFreeCell(floor: number): Cell | null {
     const map = this.mapOf(floor);
     const salas = map.rooms;
-    const desde = this.state.players.size % Math.max(1, salas.length);
+    const desde = this.humanos().length % Math.max(1, salas.length);
     for (let i = 0; i < salas.length; i++) {
       const room = salas[(desde + i) % salas.length];
       for (let y = room.y; y < room.y + room.height; y++) {
