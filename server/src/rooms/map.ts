@@ -41,7 +41,7 @@ export interface Rect {
  * que permite testear la generación y, más adelante, que todos los clientes
  * de una instancia vean lo mismo sin mandar el mapa entero.
  */
-function createRandom(seed: number): () => number {
+export function createRandom(seed: number): () => number {
   let state = seed >>> 0 || 1;
   return () => {
     // xorshift32: alcanza de sobra y cabe en cinco líneas.

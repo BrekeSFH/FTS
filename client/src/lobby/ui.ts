@@ -8,9 +8,12 @@ import type { LoadedAnimation } from '../iso/spriteset';
 import {
   LOBBY_ROOM,
   connectToLobby,
+  isLootKey,
+  onExtracted,
   onVision,
   requestVision,
   sendEndTurn,
+  sendLoot,
   sendStep,
   stepForKey,
   type LobbyPlayer,
@@ -241,9 +244,20 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
           requestAnimationFrame(animar);
         };
         requestAnimationFrame(animar);
+        // Salir por una salida también corta la conexión; el aviso llega
+        // antes, y es lo que tiene que quedar a la vista.
+        let extraido: number | null = null;
+        onExtracted(joined, ({ loot }) => {
+          extraido = loot;
+        });
         joined.onLeave((code) => {
+          if (room !== joined) return;
+          if (extraido !== null) {
+            disconnect(`Saliste con vida. Botín: ${extraido}.`);
+            return;
+          }
           // El servidor cerró la sala o se cayó la conexión.
-          if (room === joined) disconnect(`Conexión cerrada (código ${code}).`, code !== 1000);
+          disconnect(`Conexión cerrada (código ${code}).`, code !== 1000);
         });
         draw();
       })
@@ -256,6 +270,11 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
   window.addEventListener('keydown', (event) => {
     if (!room) return;
     if (event.target instanceof HTMLInputElement) return;
+    if (isLootKey(event.key)) {
+      event.preventDefault();
+      if (turnHud(room.state ?? null, room.state?.players?.get(room.sessionId)).canMove) sendLoot(room);
+      return;
+    }
     const step = stepForKey(event.key);
     if (!step) return;
     event.preventDefault();

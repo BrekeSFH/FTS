@@ -11,8 +11,12 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { VAULT_ROOM, createServer } from '../src/createServer';
 import { FLOOR, isBlocked } from '../src/rooms/map';
 import { SIGHT_RADIUS, visibleMask } from '../src/rooms/vision';
+import { PRIMERA_SALIDA, exitAt } from '../src/rooms/loot';
 import {
   AP_POR_TURNO,
+  AP_SAQUEO,
+  EXTRACTED_MESSAGE,
+  type ExtractedMessage,
   PARTIES,
   VAULT_FLOORS,
   VAULT_HEIGHT,
@@ -436,5 +440,121 @@ describe('los pisos de la Vault', () => {
     expect(mask[c.y * VAULT_WIDTH + c.x]).toBe('1');
     expect(mask).toBe(visibleMask(room.mapOf(1), c.x, c.y, SIGHT_RADIUS));
     expect(mask, 'con el mapa de arriba saldría otra').not.toBe(visibleMask(room.mapOf(0), c.x, c.y, SIGHT_RADIUS));
+  });
+});
+
+describe('saqueo y extracción', () => {
+  /** Lleva la sala hasta una ronda, cerrando los turnos de todos. */
+  function irARonda(room: VaultRoom, ronda: number): void {
+    while (room.state.round < ronda) {
+      for (const id of [...(room.turns?.pending ?? [])]) room.endTurn(id);
+      room.publish();
+    }
+  }
+
+  it('abrir un contenedor al lado suma su valor y cuesta acción', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const client = await entrar(room);
+    const cache = room.caches[0];
+    const c = room.state.players.get(client.sessionId)!;
+    c.floor = cache.floor;
+    c.x = cache.x;
+    c.y = cache.y;
+
+    expect(room.tryLoot(client.sessionId)).toBe(true);
+    expect(c.loot).toBe(cache.value);
+    expect(c.ap).toBe(AP_POR_TURNO - AP_SAQUEO);
+    expect(room.state.caches[0].looted).toBe(true);
+    expect(room.tryLoot(client.sessionId), 'ya está vacío').toBe(false);
+    expect(c.loot).toBe(cache.value);
+  });
+
+  it('no se saquea de lejos, desde otro piso ni sin acción', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const client = await entrar(room);
+    const cache = room.caches[0];
+    const c = room.state.players.get(client.sessionId)!;
+    c.floor = cache.floor;
+    // Ningún contenedor cerca de la esquina de arriba.
+    c.x = 0;
+    c.y = 0;
+    expect(room.tryLoot(client.sessionId), 'lejos').toBe(false);
+
+    c.floor = cache.floor === 0 ? 1 : 0;
+    c.x = cache.x;
+    c.y = cache.y;
+    const otroAhi = room.caches.some((k) => k.floor === c.floor && Math.abs(k.x - c.x) <= 1 && Math.abs(k.y - c.y) <= 1);
+    if (!otroAhi) expect(room.tryLoot(client.sessionId), 'otro piso').toBe(false);
+
+    c.floor = cache.floor;
+    c.ap = AP_SAQUEO - 1;
+    expect(room.tryLoot(client.sessionId), 'sin acción').toBe(false);
+    expect(room.state.caches[0].looted).toBe(false);
+  });
+
+  it('el valor del contenedor no viaja en el estado', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    expect(Object.keys(room.state.caches[0].toJSON()).sort()).toEqual(['floor', 'looted', 'x', 'y']);
+  });
+
+  it('las salidas se publican según la ronda', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    await entrar(room);
+    expect(room.state.exits).toHaveLength(0);
+
+    irARonda(room, PRIMERA_SALIDA);
+    const esperada = exitAt(room.floors, 7, PRIMERA_SALIDA)!;
+    expect(room.state.exits).toHaveLength(1);
+    expect(room.state.exits[0].toJSON()).toEqual({
+      floor: esperada.floor,
+      x: esperada.x,
+      y: esperada.y,
+      closes: esperada.closes,
+    });
+
+    irARonda(room, esperada.closes);
+    expect(room.state.exits).toHaveLength(0);
+  });
+
+  it('pisar una salida abierta saca de la instancia con el botín', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const client = await entrar(room);
+    let avisado: ExtractedMessage | null = null;
+    client.onMessage(EXTRACTED_MESSAGE, (m: ExtractedMessage) => (avisado = m));
+    irARonda(room, PRIMERA_SALIDA);
+    // Entró solo, así que la ronda nueva lo deja pendiente y le toca.
+    const salida = room.state.exits[0];
+
+    const c = room.state.players.get(client.sessionId)!;
+    const map = room.mapOf(salida.floor);
+    const paso = [
+      { dx: 1, dy: 0 },
+      { dx: -1, dy: 0 },
+      { dx: 0, dy: 1 },
+      { dx: 0, dy: -1 },
+    ].find(({ dx, dy }) => map.cells[(salida.y - dy) * map.width + salida.x - dx] === FLOOR)!;
+    c.floor = salida.floor;
+    c.x = salida.x - paso.dx;
+    c.y = salida.y - paso.dy;
+    c.loot = 37;
+
+    client.send('move', paso);
+    await new Promise<void>((resolve) => client.onLeave(() => resolve()));
+
+    expect(avisado).toEqual({ loot: 37 });
+    expect(room.state.players.has(client.sessionId)).toBe(false);
+    expect(room.extracted).toEqual([{ name: c.name, party: c.party, loot: 37 }]);
+  });
+
+  it('quien se va sin extraer no se lleva nada', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7 });
+    const client = await entrar(room);
+    // Alguien más se queda: con la sala vacía, Colyseus la cierra y no hay
+    // parche que esperar.
+    await entrar(room);
+    room.state.players.get(client.sessionId)!.loot = 50;
+    await client.leave();
+    await room.waitForNextPatch();
+    expect(room.extracted).toEqual([]);
   });
 });

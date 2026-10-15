@@ -22,10 +22,13 @@ import {
   type Cell,
   type DungeonFloor,
 } from './map';
+import { exitAt, placeCaches, type Cache } from './loot';
 import { endTurn, join, leave, remainingMs, startInstance, tick, type TurnState } from './turns';
 import {
   ArraySchema,
   Combatant,
+  ExitPoint,
+  LootCache,
   MapSchema,
   VaultState,
   type CombatantType,
@@ -65,6 +68,27 @@ const TICK_MS = 500;
 export const PARTIES = ['Acero', 'Yermo'];
 
 const MAX_NAME_LENGTH = 16;
+
+/**
+ * Lo que cuesta abrir un contenedor. Más que un paso: saquear en medio de un
+ * pasillo a la vista tiene que ser una decisión, no algo que sale gratis.
+ */
+export const AP_SAQUEO = 2;
+
+/** Mensaje con el que se avisa a alguien que salió de la instancia. */
+export const EXTRACTED_MESSAGE = 'extracted';
+
+export interface ExtractedMessage {
+  /** El valor de lo que se llevó. */
+  loot: number;
+}
+
+/** Quién salió y con cuánto. Lo va a leer el alijo, cuando exista. */
+export interface Extraction {
+  name: string;
+  party: string;
+  loot: number;
+}
 
 /** Mismo mensaje y mismo formato que el lobby; ver `LobbyRoom`. */
 export const VISION_MESSAGE = 'vision';
@@ -124,10 +148,27 @@ export class VaultRoom extends Room<VaultRoomOptions> {
   /** Semilla de las tiradas, para que una sala con semilla fija sea repetible. */
   private siguienteTirada = 0;
 
+  /** Semilla de la instancia: de ella salen el mapa, el botín y las salidas. */
+  private seed = 1;
+
+  /**
+   * Los contenedores con su valor, en el mismo orden que `state.caches`. El
+   * valor vive solo acá; ver `LootCache`.
+   */
+  caches: Cache[] = [];
+
+  /**
+   * Quiénes salieron con vida y con cuánto. Todavía no va a ningún lado: el
+   * alijo del lobby no existe. Queda acá para que exista algo que leer.
+   */
+  extracted: Extraction[] = [];
+
   override onCreate(options: { seed?: number } = {}): void {
     const seed = options.seed ?? randomSeed();
     this.floors = generateDungeon(VAULT_WIDTH, VAULT_HEIGHT, seed, VAULT_FLOORS, MAP_OPTIONS);
     this.siguienteTirada = seed;
+    this.seed = seed;
+    this.caches = placeCaches(this.floors, seed);
 
     this.state = new VaultState({
       width: VAULT_WIDTH,
@@ -137,10 +178,27 @@ export class VaultRoom extends Room<VaultRoomOptions> {
       round: 0,
       remainingMs: 0,
       players: new MapSchema(),
+      caches: new ArraySchema(
+        ...this.caches.map(({ floor, x, y }) => new LootCache({ floor, x, y, looted: false })),
+      ),
+      exits: [],
     });
 
     this.onMessage('move', (client, message: MoveMessage) => {
-      if (this.tryMove(client.sessionId, message)) this.sendVision(client);
+      if (this.tryMove(client.sessionId, message)) {
+        const loot = this.extractIfOnExit(client.sessionId);
+        if (loot !== null) {
+          client.send(EXTRACTED_MESSAGE, { loot } satisfies ExtractedMessage);
+          client.leave();
+        } else {
+          this.sendVision(client);
+        }
+      }
+      this.publish();
+    });
+
+    this.onMessage('loot', (client) => {
+      this.tryLoot(client.sessionId);
       this.publish();
     });
 
@@ -180,6 +238,7 @@ export class VaultRoom extends Room<VaultRoomOptions> {
         ap: AP_POR_TURNO,
         done: false,
         active: false,
+        loot: 0,
       }),
     );
 
@@ -267,6 +326,7 @@ export class VaultRoom extends Room<VaultRoomOptions> {
       // Ronda nueva: a todos se les repone la acción.
       this.state.round = this.turns.round;
       for (const [, c] of this.state.players) c.ap = AP_POR_TURNO;
+      this.publishExits();
     }
 
     const pendientes = new Set(this.turns.pending);
@@ -282,6 +342,63 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     const now = Date.now();
     const quedan = [...this.state.players.keys()].map((id) => remainingMs(this.turns!, id, now));
     this.state.remainingMs = quedan.length > 0 ? Math.max(...quedan) : 0;
+  }
+
+  /** Vuelca al estado la salida de la ronda en curso, si hay una. */
+  private publishExits(): void {
+    const salida = exitAt(this.floors, this.seed, this.state.round);
+    this.state.exits.clear();
+    if (salida) {
+      const { floor, x, y, closes } = salida;
+      this.state.exits.push(new ExitPoint({ floor, x, y, closes }));
+    }
+  }
+
+  /**
+   * Abre el contenedor que tenga al alcance, si le toca y le alcanza la
+   * acción. Al alcance es la celda propia o una vecina, como un paso.
+   */
+  tryLoot(sessionId: string): boolean {
+    const combatant = this.state.players.get(sessionId);
+    if (!combatant) return false;
+    if (!this.activos().has(sessionId)) return false;
+    if (combatant.ap < AP_SAQUEO) return false;
+
+    const i = this.caches.findIndex(
+      (c, n) =>
+        !this.state.caches[n].looted &&
+        c.floor === combatant.floor &&
+        Math.max(Math.abs(c.x - combatant.x), Math.abs(c.y - combatant.y)) <= 1,
+    );
+    if (i < 0) return false;
+
+    this.state.caches[i].looted = true;
+    combatant.loot += this.caches[i].value;
+    combatant.ap -= AP_SAQUEO;
+    if (combatant.ap === 0) this.endTurn(sessionId);
+    return true;
+  }
+
+  /**
+   * Si está parado sobre una salida abierta, lo saca de la instancia.
+   *
+   * Devuelve con cuánto salió, o `null` si no estaba en una salida. Se lo
+   * borra del estado y del reloj en el acto y no al cortarse la conexión:
+   * mientras tanto podría seguir moviendo, y el que salió ya no está.
+   */
+  extractIfOnExit(sessionId: string): number | null {
+    const combatant = this.state.players.get(sessionId);
+    if (!combatant) return null;
+    const enSalida = this.state.exits.some(
+      (e) => e.floor === combatant.floor && e.x === combatant.x && e.y === combatant.y,
+    );
+    if (!enSalida) return null;
+
+    const { name, party, loot } = combatant;
+    this.extracted.push({ name, party, loot });
+    this.state.players.delete(sessionId);
+    if (this.turns) this.turns = leave(this.turns, sessionId, Date.now());
+    return loot;
   }
 
   /** Cierra el turno de alguien, si es suyo para cerrar. */

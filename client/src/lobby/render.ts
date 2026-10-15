@@ -27,7 +27,7 @@ import {
 import { hidesCell } from '../iso/occlusion';
 import { wallPlan, type WallSuffix } from '../iso/walls';
 import type { VisionView } from './fog';
-import type { LobbyPlayer, LobbyState } from './connection';
+import type { ExitPoint, LobbyPlayer, LobbyState, LootCache } from './connection';
 
 /** Un tile listo para dibujar, con el punto que se apoya en la celda. */
 export interface PlacedTile {
@@ -181,6 +181,45 @@ function drawStairs(context: CanvasRenderingContext2D, gx: number, gy: number, h
   context.textBaseline = 'alphabetic';
 }
 
+/** Rombo relleno sobre una celda, la base de todos los marcadores. */
+function fillDiamond(context: CanvasRenderingContext2D, gx: number, gy: number, color: string): void {
+  const { x, y } = gridToScreen(gx, gy);
+  context.beginPath();
+  context.moveTo(x + HALF_WIDTH, y);
+  context.lineTo(x + HALF_WIDTH * 2, y + HALF_HEIGHT);
+  context.lineTo(x + HALF_WIDTH, y + HALF_HEIGHT * 2);
+  context.lineTo(x, y + HALF_HEIGHT);
+  context.closePath();
+  context.fillStyle = color;
+  context.fill();
+}
+
+/** Un texto centrado en la celda. */
+function labelCell(context: CanvasRenderingContext2D, gx: number, gy: number, texto: string, font: string): void {
+  const { x, y } = gridToScreen(gx, gy);
+  context.fillStyle = '#ffffff';
+  context.font = font;
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.fillText(texto, x + HALF_WIDTH, y + HALF_HEIGHT);
+  context.textBaseline = 'alphabetic';
+}
+
+/**
+ * Un contenedor: lleno o ya vaciado. Marcador y no tile, por lo mismo que
+ * las escaleras: los contenedores del juego son objetos de varias celdas.
+ */
+function drawCache(context: CanvasRenderingContext2D, cache: LootCache): void {
+  fillDiamond(context, cache.x, cache.y, cache.looted ? 'rgba(90, 90, 90, 0.5)' : 'rgba(150, 95, 30, 0.75)');
+  labelCell(context, cache.x, cache.y, cache.looted ? '□' : '■', 'bold 13px system-ui, sans-serif');
+}
+
+/** Una salida abierta. */
+function drawExit(context: CanvasRenderingContext2D, exit: ExitPoint): void {
+  fillDiamond(context, exit.x, exit.y, 'rgba(40, 170, 80, 0.7)');
+  labelCell(context, exit.x, exit.y, 'SALIDA', 'bold 9px system-ui, sans-serif');
+}
+
 function drawPlayer(
   context: CanvasRenderingContext2D,
   player: LobbyPlayer,
@@ -287,6 +326,13 @@ export function renderLobby(
     else porCelda.set(clave, [{ player, sessionId }]);
   });
 
+  // Contenedores y salidas también van intercalados por celda: un personaje
+  // parado delante de un cofre tiene que taparlo, no al revés.
+  const cofres = new Map<string, LootCache>();
+  for (const cache of Array.from(state.caches ?? [])) cofres.set(`${cache.x},${cache.y}`, cache);
+  const salidas = new Map<string, ExitPoint>();
+  for (const exit of Array.from(state.exits ?? [])) salidas.set(`${exit.x},${exit.y}`, exit);
+
   for (const cell of drawOrder(state.width, state.height) ) {
     const visible = !vision || vision.visible(cell.x, cell.y);
     // De lo que nunca se vio no se dibuja nada, ni el rombo de alambre: el
@@ -308,6 +354,12 @@ export function renderLobby(
       }
       const escalera = escaleraEn(state, cell.x, cell.y);
       if (escalera) drawStairs(context, cell.x, cell.y, escalera);
+      const cofre = cofres.get(`${cell.x},${cell.y}`);
+      if (cofre) drawCache(context, cofre);
+      // Una salida se muestra solo mientras se ve: aparecen y se cierran, y
+      // recordarla apagada haría creer que sigue ahí.
+      const salida = salidas.get(`${cell.x},${cell.y}`);
+      if (salida && visible) drawExit(context, salida);
       context.globalAlpha = 1;
     }
 

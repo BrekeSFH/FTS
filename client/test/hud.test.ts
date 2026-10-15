@@ -90,3 +90,25 @@ describe('turnHud con varios pisos', () => {
     expect(hud.text).not.toContain('piso');
   });
 });
+
+describe('turnHud con botín y salidas', () => {
+  it('dice cuánto se lleva encima', () => {
+    const hud = turnHud(sala({ round: 1 }), jugador({ loot: 42, active: true, ap: 6 }));
+    expect(hud.text).toContain('botín 42');
+  });
+
+  it('avisa la salida abierta, en qué piso y cuánto le queda', () => {
+    const exits = [{ floor: 2, x: 0, y: 0, closes: 6 }];
+    const pisos = ['..', '..', '..'];
+    const hud = turnHud(sala({ round: 4, floors: pisos, exits }), jugador({ active: true, ap: 6 }));
+    expect(hud.text).toContain('salida abierta en el piso 3 (2 rondas)');
+
+    const ultima = turnHud(sala({ round: 5, floors: pisos, exits }), jugador({ active: true, ap: 6 }));
+    expect(ultima.text).toContain('(última ronda)');
+  });
+
+  it('sin salida no la menciona', () => {
+    const hud = turnHud(sala({ round: 1, exits: [] }), jugador({ active: true, ap: 6 }));
+    expect(hud.text).not.toContain('salida');
+  });
+});

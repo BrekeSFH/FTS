@@ -19,8 +19,10 @@ export function ownFloor(state: LobbyState, ownSessionId: string | null): number
 }
 
 /**
- * El estado visto desde el piso propio: el mapa de ese piso y solo la gente
- * que está en él. Los de otros pisos no se ven ni tapan nada.
+ * El estado visto desde el piso propio: el mapa de ese piso, solo la gente
+ * que está en él y solo sus contenedores y salidas. Lo de otros pisos no se
+ * ve ni tapa nada. El HUD no pasa por acá: lee el estado entero, porque
+ * una salida abierta en otro piso se avisa aunque no se dibuje.
  */
 export function floorView(state: LobbyState, ownSessionId: string | null): LobbyState {
   if (!state.floors) return state;
@@ -42,6 +44,8 @@ export function floorView(state: LobbyState, ownSessionId: string | null): Lobby
     remainingMs: state.remainingMs,
     floors: state.floors,
     cells: state.floors[piso] ?? '',
+    caches: Array.from(state.caches ?? []).filter((c) => c.floor === piso),
+    exits: Array.from(state.exits ?? []).filter((e) => e.floor === piso),
     players: {
       size: presentes.length,
       forEach(callback) {

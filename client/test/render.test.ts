@@ -124,3 +124,30 @@ describe('renderLobby con escaleras', () => {
     expect(textos).not.toContain('▼');
   });
 });
+
+describe('renderLobby con botín y salidas', () => {
+  it('distingue un contenedor lleno de uno vaciado', () => {
+    const { canvas, textos } = contextoFalso();
+    const con: LobbyState = {
+      ...estado(),
+      caches: [
+        { floor: 0, x: 0, y: 0, looted: false },
+        { floor: 0, x: 1, y: 0, looted: true },
+      ],
+    };
+    renderLobby(canvas, con, { ownSessionId: 'yo', floors: [TILE] });
+    expect(textos).toEqual(expect.arrayContaining(['■', '□']));
+  });
+
+  it('una salida se ve solo mientras se la está viendo', () => {
+    const con: LobbyState = { ...estado(), exits: [{ floor: 0, x: 1, y: 0, closes: 5 }] };
+
+    const vista1 = contextoFalso();
+    renderLobby(vista1.canvas, con, { ownSessionId: 'yo', floors: [TILE], vision: vista([0, 1], []) });
+    expect(vista1.textos).toContain('SALIDA');
+
+    const vista2 = contextoFalso();
+    renderLobby(vista2.canvas, con, { ownSessionId: 'yo', floors: [TILE], vision: vista([0], [1]) });
+    expect(vista2.textos, 'explorada pero no a la vista').not.toContain('SALIDA');
+  });
+});

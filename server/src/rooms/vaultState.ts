@@ -37,8 +37,43 @@ export const Combatant = schema(
      * dónde está el enemigo.
      */
     active: t.boolean(),
+    /**
+     * Cuánto vale lo que lleva encima. Es público a propósito: saber quién
+     * va cargado es lo que vuelve tentadora una emboscada.
+     */
+    loot: t.uint32(),
   },
   'Combatant',
+);
+
+/**
+ * Un contenedor para saquear.
+ *
+ * Lo que vale no se publica: el servidor lo guarda aparte y recién se sabe al
+ * abrirlo, en el botín de quien lo abrió. Publicarlo sería decirle a todos
+ * qué sala conviene revisar primero.
+ */
+export const LootCache = schema(
+  {
+    floor: t.uint8(),
+    x: t.uint16(),
+    y: t.uint16(),
+    /** Si ya lo vació alguien. Queda en el mapa, vacío. */
+    looted: t.boolean(),
+  },
+  'LootCache',
+);
+
+/** Una salida abierta: pisarla saca de la instancia con lo que se lleve. */
+export const ExitPoint = schema(
+  {
+    floor: t.uint8(),
+    x: t.uint16(),
+    y: t.uint16(),
+    /** Primera ronda en la que ya no está, para avisar cuánto le queda. */
+    closes: t.uint16(),
+  },
+  'ExitPoint',
 );
 
 export const VaultState = schema(
@@ -70,6 +105,10 @@ export const VaultState = schema(
      * niebla del cliente sirven para las dos salas sin tocar nada.
      */
     players: t.map(Combatant),
+    /** Los contenedores de todos los pisos, en un orden fijo. */
+    caches: t.array(LootCache),
+    /** Las salidas abiertas en esta ronda. Cero o una, por ahora. */
+    exits: t.array(ExitPoint),
   },
   'VaultState',
 );

@@ -56,6 +56,32 @@ export interface LobbyPlayer {
   done?: boolean;
   /** Si puede actuar ahora. Solo en la Vault. */
   active?: boolean;
+  /** Cuánto vale lo que lleva encima. Solo en la Vault. */
+  loot?: number;
+}
+
+/** Un contenedor. Lo que vale no se publica: se sabe al abrirlo. */
+export interface LootCache {
+  floor: number;
+  x: number;
+  y: number;
+  looted: boolean;
+}
+
+/** Una salida abierta. Pisarla saca de la instancia con el botín. */
+export interface ExitPoint {
+  floor: number;
+  x: number;
+  y: number;
+  /** Primera ronda en la que ya no está. */
+  closes: number;
+}
+
+/** Mensaje con el que la Vault avisa que uno salió, y con cuánto. */
+export const EXTRACTED_MESSAGE = 'extracted';
+
+export interface ExtractedMessage {
+  loot: number;
 }
 
 /**
@@ -73,6 +99,10 @@ export interface LobbyState {
   cells?: string;
   /** Los pisos de la mazmorra, en el mismo formato. Solo en la Vault. */
   floors?: ArrayLike<string>;
+  /** Los contenedores de todos los pisos. Solo en la Vault. */
+  caches?: ArrayLike<LootCache>;
+  /** Las salidas abiertas en esta ronda. Solo en la Vault. */
+  exits?: ArrayLike<ExitPoint>;
   /**
    * Semilla con la que elegir los tiles. La manda el servidor en vez de los
    * tiles mismos: no puede alojar assets del juego.
@@ -125,6 +155,19 @@ export function sendEndTurn(room: LobbyRoom): void {
 
 export function sendStep(room: LobbyRoom, step: Step): void {
   room.send('move', step);
+}
+
+/** Abre el contenedor que haya al alcance. Solo lo escucha la Vault. */
+export function sendLoot(room: LobbyRoom): void {
+  room.send('loot');
+}
+
+/** Tecla para saquear. La F queda a mano de las de movimiento. */
+export const isLootKey = (key: string): boolean => key.toLowerCase() === 'f';
+
+/** Queda avisado si la Vault lo saca de la instancia por una salida. */
+export function onExtracted(room: LobbyRoom, handler: (message: ExtractedMessage) => void): void {
+  room.onMessage<ExtractedMessage>(EXTRACTED_MESSAGE, handler);
 }
 
 /** Queda avisado cada vez que cambia lo que el jugador ve. */

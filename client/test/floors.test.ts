@@ -62,3 +62,19 @@ describe('floorView', () => {
     expect(floorView(vault(), 'nadie').cells).toBe('..');
   });
 });
+
+describe('floorView con botín y salidas', () => {
+  it('deja solo los contenedores y salidas del piso propio', () => {
+    const state: LobbyState = {
+      ...vault(),
+      caches: [
+        { floor: 0, x: 0, y: 0, looted: false },
+        { floor: 1, x: 1, y: 0, looted: false },
+      ],
+      exits: [{ floor: 0, x: 1, y: 0, closes: 6 }],
+    };
+    const vista = floorView(state, 'yo');
+    expect(Array.from(vista.caches!)).toEqual([{ floor: 1, x: 1, y: 0, looted: false }]);
+    expect(Array.from(vista.exits!)).toEqual([]);
+  });
+});
