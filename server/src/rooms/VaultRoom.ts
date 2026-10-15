@@ -13,7 +13,7 @@ import { Client, Room } from '@colyseus/core';
 import { currentStash, playerIdFromToken } from '../stash';
 import { ENEMY_PARTY, esEnemigo, nextStep, placeEnemies } from './ai';
 import { HP_MAX, canShoot, hitChance, resolveShot } from './combat';
-import { ITEMS, STARTING_WEAPON, armorReduction, itemById, valueOf, weaponStats } from './items';
+import { ITEMS, STARTING_WEAPON, armorReduction, isStashable, itemById, valueOf, weaponStats } from './items';
 import { whoCanAct, type Combatant as Luchador } from './contact';
 import { DEFAULT_FACING, facingFromStep } from './direction';
 import {
@@ -180,12 +180,13 @@ export interface JoinOptions {
 const EQUIPO_MAXIMO = 40;
 
 /**
- * La lista de equipo que pide el cliente, saneada: solo ids del catálogo y
- * no más de `EQUIPO_MAXIMO`. Lo que no se entienda se descarta.
+ * La lista de equipo que pide el cliente, saneada: solo ids del catálogo que
+ * se pueden guardar, y no más de `EQUIPO_MAXIMO`. Lo que no se entienda se
+ * descarta.
  */
 export function sanitizeLoadout(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
-  return raw.filter((id): id is string => typeof id === 'string' && itemById(id) !== undefined).slice(0, EQUIPO_MAXIMO);
+  return raw.filter((id): id is string => typeof id === 'string' && isStashable(id)).slice(0, EQUIPO_MAXIMO);
 }
 
 function isSingleStep(dx: number, dy: number): boolean {
@@ -505,7 +506,9 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     const muerto = this.state.players.get(sessionId);
     if (!muerto) return;
     const { name, party, loot, floor, x, y } = muerto;
-    const items = [...muerto.items];
+    // Lo prestado no queda en el piso: no es de nadie, y si se pudiera
+    // juntar, matar a quien entra sin nada daría armas gratis.
+    const items = [...muerto.items].filter(isStashable);
     if (!esEnemigo(sessionId)) this.fallen.push({ name, party, loot, items });
     this.botinPerdido.set(sessionId, loot);
     this.rastro.delete(sessionId);
@@ -739,7 +742,8 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     if (!enSalida) return null;
 
     const { name, party, loot } = combatant;
-    const items = [...combatant.items];
+    // Lo prestado se devuelve al salir: guardarlo sería una canilla abierta.
+    const items = [...combatant.items].filter(isStashable);
     this.extracted.push({ name, party, loot, items });
     this.state.players.delete(sessionId);
     if (this.turns) this.turns = leave(this.turns, sessionId, Date.now());

@@ -13,7 +13,7 @@
  * persona.
  */
 import { STAIRS_DOWN, STAIRS_UP, createRandom, isBlocked, type Cell, type DungeonFloor } from './map';
-import { ITEMS, STARTING_WEAPON, tierForFloor } from './items';
+import { ITEMS, tierForFloor } from './items';
 import { rollItems } from './loot';
 
 /** La party de los enemigos. No está entre las que puede pedir un jugador. */
@@ -35,6 +35,9 @@ export interface EnemySpawn extends Cell {
   /** Todo lo que lleva encima, que deja al morir. */
   items: string[];
 }
+
+/** El arma de un enemigo si en su nivel no hay ninguna. */
+const ARMA_DE_ENEMIGO = 'pistola';
 
 /** Vida de un enemigo del primer piso; cada piso suma `VIDA_POR_PISO`. */
 const VIDA_BASE = 15;
@@ -72,8 +75,10 @@ export function placeEnemies(floors: readonly DungeonFloor[], seed: number): Ene
       // pistola; más abajo, lo que se encuentra ahí. Del segundo piso para
       // abajo llevan armadura.
       const nivel = floor === 0 ? 0 : tierForFloor(floor, random());
-      const armas = ITEMS.filter((i) => i.kind === 'weapon' && i.tier === nivel);
-      const weapon = armas.length > 0 ? armas[Math.floor(random() * armas.length)].id : STARTING_WEAPON;
+      // Nunca la de emergencia: la dejarían al morir, y es lo único que no
+      // se puede guardar.
+      const armas = ITEMS.filter((i) => i.kind === 'weapon' && i.tier === nivel && !i.noStash);
+      const weapon = armas.length > 0 ? armas[Math.floor(random() * armas.length)].id : ARMA_DE_ENEMIGO;
       const armaduras = ITEMS.filter((i) => i.kind === 'armor' && i.tier <= floor);
       const armor = floor > 0 && armaduras.length > 0 ? armaduras[Math.floor(random() * armaduras.length)].id : '';
       out.push({

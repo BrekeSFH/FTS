@@ -554,7 +554,8 @@ describe('saqueo y extracción', () => {
     client.send('move', paso);
     await new Promise<void>((resolve) => client.onLeave(() => resolve()));
 
-    const items = [STARTING_WEAPON, 'holodisco'];
+    // La pistola de emergencia no sale: es prestada.
+    const items = ['holodisco'];
     expect(avisado, 'sin alijo en el servidor no se guarda').toEqual({ loot, items, saved: false });
     expect(room.state.players.has(client.sessionId)).toBe(false);
     expect(room.extracted).toEqual([{ name: c.name, party: c.party, loot, items }]);
@@ -610,7 +611,9 @@ describe('disparos y muerte', () => {
 
     const r = room.tryAttack(tira.sessionId, recibe.sessionId)!;
     expect(r).not.toBeNull();
-    expect(r.chance).toBe(95);
+    // A quemarropa, el 95 % más la puntería del arma, que en la de
+    // emergencia resta.
+    expect(r.chance).toBe(Math.min(95, 95 + weaponStats(STARTING_WEAPON).accuracy));
     expect(tirador.ap).toBe(AP_POR_TURNO - weaponStats(STARTING_WEAPON).ap);
     expect(blanco.hp).toBe(HP_MAX - r.damage);
     if (r.hit) expect(r.damage).toBeGreaterThan(0);
@@ -675,8 +678,8 @@ describe('disparos y muerte', () => {
     expect(room.state.players.has(recibe.sessionId)).toBe(false);
     expect(room.fallen).toEqual([expect.objectContaining({ name, loot })]);
     expect(room.caches).toHaveLength(contenedores + 1);
-    // Deja todo, también el arma con la que entró.
-    expect(room.caches[contenedores]).toEqual({ floor: 0, x, y, items: [STARTING_WEAPON, 'componentes'] });
+    // Deja todo lo suyo. La pistola de emergencia no: era prestada.
+    expect(room.caches[contenedores]).toEqual({ floor: 0, x, y, items: ['componentes'] });
     expect(room.state.caches[contenedores].looted).toBe(false);
   });
 

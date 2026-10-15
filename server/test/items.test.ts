@@ -4,6 +4,7 @@ import {
   ITEMS,
   STARTING_WEAPON,
   armorReduction,
+  isStashable,
   itemById,
   randomItemOfTier,
   tierForFloor,
@@ -74,5 +75,26 @@ describe('tierForFloor', () => {
     const r = reparto(2);
     expect(r[3]).toBeGreaterThan(r[2]);
     expect(r[1]).toBe(0);
+  });
+});
+
+describe('la pistola de emergencia', () => {
+  it('no vale nada y no se guarda', () => {
+    expect(itemById(STARTING_WEAPON)).toMatchObject({ value: 0, noStash: true });
+    expect(isStashable(STARTING_WEAPON)).toBe(false);
+  });
+
+  it('todo lo demás se guarda, y lo que no existe no', () => {
+    for (const item of ITEMS) if (item.id !== STARTING_WEAPON) expect(isStashable(item.id), item.id).toBe(true);
+    expect(isStashable('inventado')).toBe(false);
+  });
+
+  it('es la peor arma del catálogo', () => {
+    const daño = (id: string) => weaponStats(id).damageMax;
+    for (const item of ITEMS) {
+      if (item.kind === 'weapon' && item.id !== STARTING_WEAPON) {
+        expect(daño(item.id), item.id).toBeGreaterThan(daño(STARTING_WEAPON));
+      }
+    }
   });
 });

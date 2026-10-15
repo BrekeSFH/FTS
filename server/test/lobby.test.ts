@@ -328,7 +328,9 @@ describe('visión', () => {
   });
 
   it('girar contra una pared no manda máscara nueva', async () => {
-    const room = await colyseus.createRoom<LobbyRoom>(LOBBY_ROOM);
+    // Semilla fija: el spawn es la esquina de la primera sala, y con alguna
+    // semilla un pasillo entra justo por ahí y no deja pared al lado.
+    const room = await colyseus.createRoom<LobbyRoom>(LOBBY_ROOM, { seed: 4321 });
     const client = await colyseus.connectTo(room);
     const yo = room.state.players.get(client.sessionId)!;
 

@@ -34,6 +34,11 @@ export interface ItemBase {
   /** Lo que vale. La suma de lo que se lleva es el botín. */
   value: number;
   tier: Tier;
+  /**
+   * Si no se puede guardar en el alijo. Es lo que se presta para poder
+   * jugar: si se pudiera guardar, entrar y salir lo iría acumulando gratis.
+   */
+  noStash?: true;
 }
 
 export type Item =
@@ -43,8 +48,10 @@ export type Item =
   | (ItemBase & { kind: 'valuable' });
 
 export const ITEMS: readonly Item[] = [
-  // Armas. La pistola es la del equipo inicial: hasta que exista el alijo,
-  // todos entran con una.
+  // Armas. La de emergencia es la que se presta a quien entra sin arma: peor
+  // que cualquier otra, no vale nada y no se puede guardar.
+  { id: 'pistola-emergencia', name: 'Pistola de emergencia', kind: 'weapon', tier: 0, value: 0, noStash: true,
+    weapon: { damageMin: 4, damageMax: 8, ap: 3, range: 8, accuracy: -5 } },
   { id: 'pistola', name: 'Pistola 9 mm', kind: 'weapon', tier: 0, value: 5,
     weapon: { damageMin: 6, damageMax: 12, ap: 3, range: 12, accuracy: 0 } },
   { id: 'subfusil', name: 'Subfusil', kind: 'weapon', tier: 1, value: 15,
@@ -76,8 +83,18 @@ export function itemById(id: string): Item | undefined {
   return POR_ID.get(id);
 }
 
-/** El arma con la que se entra, y con la que pelea quien no tiene otra. */
-export const STARTING_WEAPON = 'pistola';
+/**
+ * El arma que se presta a quien entra sin una propia. Sin arma no hay forma
+ * de jugar, pero si se pudiera guardar, entrar y extraer una y otra vez
+ * llenaría el alijo de armas gratis: por eso es `noStash`.
+ */
+export const STARTING_WEAPON = 'pistola-emergencia';
+
+/** Si un objeto existe y se puede guardar en el alijo. */
+export function isStashable(id: string): boolean {
+  const item = itemById(id);
+  return item !== undefined && !item.noStash;
+}
 
 /** Las estadísticas de un arma, o las de la inicial si el id no es un arma. */
 export function weaponStats(id: string): WeaponStats {

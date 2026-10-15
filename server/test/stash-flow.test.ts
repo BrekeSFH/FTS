@@ -128,6 +128,35 @@ describe('salir o perderlo', () => {
     expect(stash.contents(YO)).toEqual({ escopeta: 1, holodisco: 1 });
   });
 
+  it('la pistola de emergencia no vuelve al alijo', async () => {
+    const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });
+    const client = await entrarVault(room, { token: TOKEN });
+    let avisado: ExtractedMessage | null = null;
+    client.onMessage(EXTRACTED_MESSAGE, (m: ExtractedMessage) => (avisado = m));
+
+    while (room.state.round < PRIMERA_SALIDA) {
+      for (const id of [...(room.turns?.pending ?? [])]) room.endTurn(id);
+      room.publish();
+    }
+    const salida = room.state.exits[0];
+    const c = room.state.players.get(client.sessionId)!;
+    expect([...c.items]).toEqual([STARTING_WEAPON]);
+    const map = room.mapOf(salida.floor);
+    const paso = [
+      { dx: 1, dy: 0 },
+      { dx: -1, dy: 0 },
+      { dx: 0, dy: 1 },
+      { dx: 0, dy: -1 },
+    ].find(({ dx, dy }) => map.cells[(salida.y - dy) * map.width + salida.x - dx] === FLOOR)!;
+    Object.assign(c, { floor: salida.floor, x: salida.x - paso.dx, y: salida.y - paso.dy });
+
+    client.send('move', paso);
+    await new Promise<void>((resolve) => client.onLeave(() => resolve()));
+    // Entrar sin nada y salir no puede dejar nada: si no, es una canilla.
+    expect(avisado).toMatchObject({ saved: true, items: [] });
+    expect(stash.contents(YO)).toEqual({});
+  });
+
   it('irse sin extraer lo pierde', async () => {
     stash.add(YO, ['escopeta']);
     const room = await colyseus.createRoom<VaultRoom>(VAULT_ROOM, { seed: 7, enemies: false });

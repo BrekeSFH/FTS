@@ -128,7 +128,7 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
       const llevar = loadoutFrom(alijo ?? {}, seleccion);
       resumen.textContent =
         llevar.length === 0
-          ? 'No elegiste nada para llevar: entrás a la Vault con la pistola de emergencia.'
+          ? 'No elegiste nada para llevar: entrás a la Vault con una pistola de emergencia prestada, que no vuelve con vos.'
           : `Llevás ${llevar.length} ${llevar.length === 1 ? 'objeto' : 'objetos'} (valor ${valueOfItems(llevar, catalogo)}). Al entrar salen del alijo; si no volvés, se pierden.`;
     };
 
