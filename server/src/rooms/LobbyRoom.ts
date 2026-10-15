@@ -7,7 +7,9 @@
  * mensaje se valida antes de tocar el estado.
  */
 import { Client, Room } from '@colyseus/core';
+import { currentStash, playerIdFromToken, type StashContents } from '../stash';
 import { DEFAULT_FACING, facingFromStep } from './direction';
+import { ITEMS } from './items';
 import { floorCells, generateMap, isBlocked, randomSeed, type GeneratedMap } from './map';
 import { LobbyState, MapSchema, Player, type LobbyStateType } from './state';
 import { SIGHT_RADIUS, visibleMask } from './vision';
@@ -53,7 +55,23 @@ export interface MoveMessage {
 
 export interface JoinOptions {
   name?: unknown;
+  /** Token del jugador, que lo identifica para su alijo. */
+  token?: unknown;
 }
+
+/**
+ * Mensaje con el alijo de quien lo pide. Es por jugador, así que no va en el
+ * estado, como la visión.
+ */
+export const STASH_MESSAGE = 'stash';
+
+export interface StashMessage {
+  /** Cuántos de cada objeto. Vacío también si el servidor no tiene alijo. */
+  contents: StashContents;
+}
+
+/** Mismo mensaje que en la Vault: el catálogo hace falta para leer el alijo. */
+export const ITEMS_MESSAGE = 'items';
 
 /** Un paso válido mueve una celda en alguna de las ocho direcciones. */
 function isSingleStep(dx: number, dy: number): boolean {
@@ -102,6 +120,20 @@ export class LobbyRoom extends Room<LobbyRoomOptions> {
     // el cliente todavía está terminando de engancharse, así que quien no lo
     // haya visto llegar tiene cómo reclamarlo en vez de quedarse a ciegas.
     this.onMessage(VISION_MESSAGE, (client) => this.sendVision(client));
+
+    // El alijo y el catálogo, a pedido: se mandan al entrar, pero pueden
+    // llegar antes de que el cliente escuche, igual que la visión.
+    this.onMessage(STASH_MESSAGE, (client) => this.sendStash(client));
+    this.onMessage(ITEMS_MESSAGE, (client) => client.send(ITEMS_MESSAGE, ITEMS));
+  }
+
+  /** De qué jugador es cada sesión, para leerle el alijo. */
+  private duenos = new Map<string, string>();
+
+  private sendStash(client: Client): void {
+    const player = this.duenos.get(client.sessionId);
+    const contents = player ? (currentStash()?.contents(player) ?? {}) : {};
+    client.send(STASH_MESSAGE, { contents } satisfies StashMessage);
   }
 
   override onJoin(client: Client, options: JoinOptions = {}): void {
@@ -123,11 +155,16 @@ export class LobbyRoom extends Room<LobbyRoomOptions> {
       }),
     );
 
+    const player = playerIdFromToken(options.token);
+    if (player) this.duenos.set(client.sessionId, player);
+    client.send(ITEMS_MESSAGE, ITEMS);
+    this.sendStash(client);
     this.sendVision(client);
   }
 
   override onLeave(client: Client): void {
     this.state.players.delete(client.sessionId);
+    this.duenos.delete(client.sessionId);
   }
 
   /** Aplica un paso si es válido. Devuelve si se movió, para los tests. */

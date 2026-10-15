@@ -10,6 +10,7 @@
  * decide. Acá además decide si siquiera le toca.
  */
 import { Client, Room } from '@colyseus/core';
+import { currentStash, playerIdFromToken } from '../stash';
 import { ENEMY_PARTY, esEnemigo, nextStep, placeEnemies } from './ai';
 import { HP_MAX, canShoot, hitChance, resolveShot } from './combat';
 import { ITEMS, STARTING_WEAPON, armorReduction, itemById, valueOf, weaponStats } from './items';
@@ -102,6 +103,8 @@ export interface ExtractedMessage {
   loot: number;
   /** Lo que se llevó, como ids del catálogo. */
   items: string[];
+  /** Si quedó guardado en el alijo. Sin token o sin alijo en el servidor, no. */
+  saved: boolean;
 }
 
 /** Mensaje con el resultado de un disparo, para el que tira y el que recibe. */
@@ -167,6 +170,22 @@ export interface MoveMessage {
 export interface JoinOptions {
   name?: unknown;
   party?: unknown;
+  /** Token del jugador, que lo identifica para su alijo. */
+  token?: unknown;
+  /** Qué sacar del alijo para llevar, como ids del catálogo. */
+  loadout?: unknown;
+}
+
+/** Cuántos objetos se pueden pedir para entrar, como mucho. */
+const EQUIPO_MAXIMO = 40;
+
+/**
+ * La lista de equipo que pide el cliente, saneada: solo ids del catálogo y
+ * no más de `EQUIPO_MAXIMO`. Lo que no se entienda se descarta.
+ */
+export function sanitizeLoadout(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((id): id is string => typeof id === 'string' && itemById(id) !== undefined).slice(0, EQUIPO_MAXIMO);
 }
 
 function isSingleStep(dx: number, dy: number): boolean {
@@ -234,6 +253,9 @@ export class VaultRoom extends Room<VaultRoomOptions> {
    */
   private rastro = new Map<string, Cell>();
 
+  /** De qué jugador es cada sesión, para devolverle lo que extraiga. */
+  private duenos = new Map<string, string>();
+
   /** Para no volver a entrar a los turnos de la IA desde adentro de ellos. */
   private jugandoIA = false;
 
@@ -294,7 +316,7 @@ export class VaultRoom extends Room<VaultRoomOptions> {
       if (this.tryMove(client.sessionId, message)) {
         const salida = this.extractIfOnExit(client.sessionId);
         if (salida !== null) {
-          client.send(EXTRACTED_MESSAGE, { loot: salida.loot, items: salida.items } satisfies ExtractedMessage);
+          client.send(EXTRACTED_MESSAGE, salida satisfies ExtractedMessage);
           client.leave();
         } else {
           this.sendVision(client);
@@ -347,6 +369,23 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     const spawn = this.findFreeCell(0);
     if (!spawn) throw new Error('No hay celdas libres en la Vault');
 
+    // El equipo sale del alijo al entrar, y desde ese momento está en juego:
+    // si muere o se va, no vuelve. Se saca después de tener lugar, para no
+    // quitarle nada a quien después no puede entrar.
+    const player = playerIdFromToken(options.token);
+    const loadout = sanitizeLoadout(options.loadout);
+    if (loadout.length > 0) {
+      const stash = currentStash();
+      if (!player || !stash) throw new Error('Para entrar con equipo hace falta un alijo');
+      if (!stash.take(player, loadout)) throw new Error('No tenés todo eso en el alijo');
+    }
+    if (player) this.duenos.set(client.sessionId, player);
+    // Sin un arma propia se entra con la pistola de emergencia: sin arma no
+    // hay forma de jugar.
+    const arma = loadout.find((id) => itemById(id)?.kind === 'weapon');
+    const items = arma ? loadout : [...loadout, STARTING_WEAPON];
+    const armadura = loadout.find((id) => itemById(id)?.kind === 'armor') ?? '';
+
     const n = this.humanos().length;
     this.state.players.set(
       client.sessionId,
@@ -364,11 +403,10 @@ export class VaultRoom extends Room<VaultRoomOptions> {
         ap: AP_POR_TURNO,
         done: false,
         active: false,
-        // Equipo inicial, hasta que exista el alijo del que sacarlo.
-        loot: valueOf([STARTING_WEAPON]),
-        items: [STARTING_WEAPON],
-        weapon: STARTING_WEAPON,
-        armor: '',
+        loot: valueOf(items),
+        items,
+        weapon: arma ?? STARTING_WEAPON,
+        armor: armadura,
         hp: HP_MAX,
         maxHp: HP_MAX,
       }),
@@ -387,6 +425,9 @@ export class VaultRoom extends Room<VaultRoomOptions> {
   }
 
   override onLeave(client: Client): void {
+    // Irse sin extraer pierde todo, como pide el punto 4: lo que llevaba ya
+    // había salido del alijo.
+    this.duenos.delete(client.sessionId);
     this.state.players.delete(client.sessionId);
     if (this.turns) this.turns = leave(this.turns, client.sessionId, Date.now());
     this.publish();
@@ -689,7 +730,7 @@ export class VaultRoom extends Room<VaultRoomOptions> {
    * borra del estado y del reloj en el acto y no al cortarse la conexión:
    * mientras tanto podría seguir moviendo, y el que salió ya no está.
    */
-  extractIfOnExit(sessionId: string): { loot: number; items: string[] } | null {
+  extractIfOnExit(sessionId: string): ExtractedMessage | null {
     const combatant = this.state.players.get(sessionId);
     if (!combatant) return null;
     const enSalida = this.state.exits.some(
@@ -702,7 +743,12 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     this.extracted.push({ name, party, loot, items });
     this.state.players.delete(sessionId);
     if (this.turns) this.turns = leave(this.turns, sessionId, Date.now());
-    return { loot, items };
+    // Lo que se llevó vuelve al alijo: es lo que hace que extraer valga.
+    const player = this.duenos.get(sessionId);
+    const stash = currentStash();
+    if (player && stash) stash.add(player, items);
+    this.duenos.delete(sessionId);
+    return { loot, items, saved: Boolean(player && stash) };
   }
 
   /** Le suma objetos a alguien y recalcula lo que vale lo que lleva. */

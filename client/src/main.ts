@@ -609,6 +609,7 @@ const lobby = setupLobby({
   turn: $('lobby-turn'),
   endTurn: $<HTMLButtonElement>('lobby-end-turn'),
   inventory: $('lobby-inventory'),
+  stash: $('lobby-stash'),
   onTileSeed: (seed) => {
     semillaSala = seed;
     void armarTablero(seed);

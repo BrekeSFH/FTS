@@ -137,6 +137,8 @@ export interface ExtractedMessage {
   loot: number;
   /** Lo que se llevó, como ids del catálogo. */
   items?: string[];
+  /** Si quedó guardado en el alijo. */
+  saved?: boolean;
 }
 
 /**
@@ -194,13 +196,40 @@ export function defaultEndpoint(): string {
   return `${protocol}//${location.hostname}:2567`;
 }
 
+/** Lo que se manda al entrar, además del nombre. */
+export interface JoinExtras {
+  /** Token del jugador; ver `identity.ts`. */
+  token?: string;
+  /** Qué sacar del alijo para llevar. Solo lo lee la Vault. */
+  loadout?: string[];
+}
+
 export async function connectToLobby(
   name: string,
   room: string = LOBBY_ROOM,
+  extras: JoinExtras = {},
   endpoint = defaultEndpoint(),
 ): Promise<LobbyRoom> {
   const client = new Client(endpoint);
-  return client.joinOrCreate<LobbyState>(room, { name });
+  return client.joinOrCreate<LobbyState>(room, { name, ...extras });
+}
+
+/** Mensaje con el alijo propio. Lo manda el lobby al entrar y a pedido. */
+export const STASH_MESSAGE = 'stash';
+
+export interface StashMessage {
+  /** Cuántos de cada objeto hay guardados. */
+  contents: Record<string, number>;
+}
+
+/** Queda avisado cuando llega el alijo. */
+export function onStash(room: LobbyRoom, handler: (message: StashMessage) => void): void {
+  room.onMessage<StashMessage>(STASH_MESSAGE, handler);
+}
+
+/** Pide el alijo, por si el que se mandó al entrar llegó antes del handler. */
+export function requestStash(room: LobbyRoom): void {
+  room.send(STASH_MESSAGE);
 }
 
 /** Cierra el turno propio. Solo lo escucha la Vault. */

@@ -14,8 +14,10 @@ import {
   onExtracted,
   onItems,
   onShot,
+  onStash,
   onVision,
   requestItems,
+  requestStash,
   requestVision,
   sendAttack,
   sendEndTurn,
@@ -30,6 +32,8 @@ import {
 } from './connection';
 import { floorView, ownFloor } from './floors';
 import { createFog, type Fog } from './fog';
+import { playerToken } from './identity';
+import { loadoutFrom, stashRows, valueOfItems, type StashContents } from './stash';
 import { ACTION_LABEL, inventoryRows, type InventoryAction } from './inventory';
 import { playerAt, toWorld, type Origin } from './pointer';
 import { turnHud } from './hud';
@@ -51,6 +55,11 @@ export interface LobbyElements {
   endTurn?: HTMLButtonElement | null;
   /** Lista de lo que lleva encima, con sus botones. Solo se llena en la Vault. */
   inventory?: HTMLElement | null;
+  /**
+   * Panel del alijo: lo que hay guardado y qué llevar. Se llena al entrar al
+   * lobby y queda a la vista al desconectarse, para elegir antes de bajar.
+   */
+  stash?: HTMLElement | null;
   /**
    * Aviso de qué semilla de tiles usa la sala, al conectarse y si cambia.
    *
@@ -96,6 +105,71 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
   let catalogo = new Map<string, CatalogItem>();
   /** Lo último que se dibujó en la mochila, para no rehacerla en cada cuadro. */
   let mochilaDibujada = '';
+  /** El alijo, tal como lo mandó el lobby la última vez. `null` si nunca llegó. */
+  let alijo: StashContents | null = null;
+  /** Cuántos de cada objeto se eligió llevar a la Vault. */
+  const seleccion = new Map<string, number>();
+
+  /**
+   * El panel del alijo. Se rehace solo cuando llega el alijo o el catálogo, no
+   * en cada cuadro: tiene campos de texto, y rehacerlos les sacaría el foco.
+   */
+  const dibujarAlijo = (): void => {
+    if (!ui.stash) return;
+    ui.stash.hidden = alijo === null;
+    if (alijo === null) return;
+
+    const filas = stashRows(alijo, catalogo, seleccion);
+    const titulo = document.createElement('h3');
+    titulo.textContent = 'Alijo';
+    const resumen = document.createElement('p');
+    resumen.className = 'muted';
+    const resumir = (): void => {
+      const llevar = loadoutFrom(alijo ?? {}, seleccion);
+      resumen.textContent =
+        llevar.length === 0
+          ? 'No elegiste nada para llevar: entrás a la Vault con la pistola de emergencia.'
+          : `Llevás ${llevar.length} ${llevar.length === 1 ? 'objeto' : 'objetos'} (valor ${valueOfItems(llevar, catalogo)}). Al entrar salen del alijo; si no volvés, se pierden.`;
+    };
+
+    if (filas.length === 0) {
+      const vacio = document.createElement('p');
+      vacio.className = 'muted';
+      vacio.textContent = 'Vacío. Lo que saques de una Vault con vida queda acá.';
+      ui.stash.replaceChildren(titulo, vacio);
+      return;
+    }
+
+    const lista = document.createElement('ul');
+    lista.className = 'inventory';
+    for (const fila of filas) {
+      const li = document.createElement('li');
+      const nombre = document.createElement('span');
+      nombre.className = 'item-name';
+      nombre.textContent = `${fila.name} ×${fila.count}`;
+      const tipo = document.createElement('span');
+      tipo.className = 'muted';
+      tipo.textContent = fila.kind;
+      const etiqueta = document.createElement('label');
+      etiqueta.textContent = 'Llevar ';
+      const campo = document.createElement('input');
+      campo.type = 'number';
+      campo.min = '0';
+      campo.max = String(fila.count);
+      campo.value = String(fila.chosen);
+      campo.addEventListener('input', () => {
+        const n = Math.max(0, Math.min(fila.count, Math.floor(Number(campo.value)) || 0));
+        if (n === 0) seleccion.delete(fila.id);
+        else seleccion.set(fila.id, n);
+        resumir();
+      });
+      etiqueta.append(campo);
+      li.append(nombre, tipo, etiqueta);
+      lista.append(li);
+    }
+    resumir();
+    ui.stash.replaceChildren(titulo, lista, resumen);
+  };
 
   /** Dónde quedó la grilla en el último dibujo, para ubicar los clicks. */
   let origen: Origin | null = null;
@@ -282,8 +356,17 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     ui.connect.disabled = true;
     setStatus('Conectando…');
     if (ui.room) ui.room.disabled = true;
-    void connectToLobby(ui.name.value, ui.room?.value ?? LOBBY_ROOM)
+    // A la Vault se baja con lo elegido del alijo; al lobby, con nada.
+    const loadout = salaPorTurnos() && alijo ? loadoutFrom(alijo, seleccion) : [];
+    void connectToLobby(ui.name.value, ui.room?.value ?? LOBBY_ROOM, { token: playerToken(), loadout })
       .then((joined) => {
+        if (loadout.length > 0 && alijo) {
+          // El servidor ya lo sacó del alijo: se refleja sin esperar a volver
+          // al lobby, para no ofrecer de nuevo lo que ya está en juego.
+          for (const id of loadout) alijo[id] = (alijo[id] ?? 0) - 1;
+          seleccion.clear();
+          dibujarAlijo();
+        }
         room = joined;
         ui.connect.disabled = false;
         ui.connect.textContent = 'Desconectar';
@@ -311,17 +394,24 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
         // Salir por una salida también corta la conexión; el aviso llega
         // antes, y es lo que tiene que quedar a la vista.
         let despedida: string | null = null;
-        onExtracted(joined, ({ loot, items }) => {
+        onExtracted(joined, ({ loot, items, saved }) => {
           const cuantos = items?.length ?? 0;
-          despedida = `Saliste con vida: ${cuantos} ${cuantos === 1 ? 'objeto' : 'objetos'}, botín ${loot}.`;
+          const guardado = saved ? ' Quedó en tu alijo: entrá al lobby para verlo.' : '';
+          despedida = `Saliste con vida: ${cuantos} ${cuantos === 1 ? 'objeto' : 'objetos'}, botín ${loot}.${guardado}`;
         });
         onItems(joined, (items) => {
           catalogo = new Map(items.map((item) => [item.id, item]));
           mochilaDibujada = '';
+          dibujarAlijo();
           draw();
         });
-        // El servidor lo manda al entrar, pero pudo salir antes del handler.
-        if (salaPorTurnos()) requestItems(joined);
+        onStash(joined, ({ contents }) => {
+          alijo = contents;
+          dibujarAlijo();
+        });
+        // Los dos se mandan al entrar, pero pudieron salir antes del handler.
+        requestItems(joined);
+        if (!salaPorTurnos()) requestStash(joined);
         onDied(joined, ({ loot, by }) => {
           despedida = `Te mató ${by}.${loot > 0 ? ` Tu botín (${loot}) quedó donde caíste.` : ''}`;
         });

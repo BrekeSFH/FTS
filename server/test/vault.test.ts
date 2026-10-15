@@ -555,7 +555,7 @@ describe('saqueo y extracción', () => {
     await new Promise<void>((resolve) => client.onLeave(() => resolve()));
 
     const items = [STARTING_WEAPON, 'holodisco'];
-    expect(avisado).toEqual({ loot, items });
+    expect(avisado, 'sin alijo en el servidor no se guarda').toEqual({ loot, items, saved: false });
     expect(room.state.players.has(client.sessionId)).toBe(false);
     expect(room.extracted).toEqual([{ name: c.name, party: c.party, loot, items }]);
   });
