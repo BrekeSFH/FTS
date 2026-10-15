@@ -15,6 +15,7 @@
  * piso tenga peligro sin que la IA juegue mejor que una persona.
  */
 import { STAIRS_DOWN, STAIRS_UP, createRandom, isBlocked, type Cell, type DungeonFloor } from './map';
+import { PASOS, findPath, type PathOptions } from './path';
 import { canSee } from './vision';
 import { ITEMS, itemById, tierForFloor, weaponStats } from './items';
 import { ammoStack, rollItems } from './loot';
@@ -109,18 +110,6 @@ function municionPara(weapon: string, random: () => number): string[] {
   return Array<string>(ammoStack(item.stack, random) + ammoStack(item.stack, random)).fill(item.id);
 }
 
-/** Los ocho pasos posibles. Primero los rectos, para que el camino no zigzaguee. */
-const PASOS = [
-  { dx: 1, dy: 0 },
-  { dx: -1, dy: 0 },
-  { dx: 0, dy: 1 },
-  { dx: 0, dy: -1 },
-  { dx: 1, dy: 1 },
-  { dx: 1, dy: -1 },
-  { dx: -1, dy: 1 },
-  { dx: -1, dy: -1 },
-];
-
 /**
  * Hasta dónde se oye un aviso entre enemigos, en celdas. Se oye a través de
  * las paredes: es un grito, no una seña.
@@ -136,44 +125,22 @@ const esEscalera = (map: DungeonFloor, x: number, y: number): boolean => {
 /**
  * El primer paso del camino más corto hasta `hasta`, o `null` si no hay.
  *
- * Es un recorrido en anchura por la grilla. Las escaleras cuentan como pared
- * salvo que sean el destino: así un enemigo no cambia de piso por pasar,
- * pero sí puede ir a buscar a alguien escaleras abajo si lo vio irse por
- * ahí. `ocupada` dice qué celdas tienen a alguien; el destino mismo se acepta
- * aunque esté ocupado, para poder acercarse a una persona.
+ * Las escaleras cuentan como pared salvo que sean el destino: así un enemigo
+ * no cambia de piso por pasar, pero sí puede ir a buscar a alguien escaleras
+ * abajo si lo vio irse por ahí. `ocupada` dice qué celdas tienen a alguien;
+ * el destino mismo se acepta aunque esté ocupado, para poder acercarse a una
+ * persona. `pisable` permite descartar más celdas, como puertas cerradas.
  */
 export function nextStep(
   map: DungeonFloor,
   desde: Cell,
   hasta: Cell,
   ocupada: (x: number, y: number) => boolean,
+  pisable?: PathOptions['pisable'],
 ): { dx: number; dy: number } | null {
-  if (desde.x === hasta.x && desde.y === hasta.y) return null;
-  const clave = (x: number, y: number) => y * map.width + x;
-  const esDestino = (x: number, y: number) => x === hasta.x && y === hasta.y;
-  const transitable = (x: number, y: number) =>
-    !isBlocked(map, x, y) && (!esEscalera(map, x, y) || esDestino(x, y));
-
-  const primero = new Map<number, { dx: number; dy: number }>();
-  const cola: Cell[] = [desde];
-  const vistos = new Set([clave(desde.x, desde.y)]);
-  while (cola.length > 0) {
-    const actual = cola.shift()!;
-    for (const paso of PASOS) {
-      const x = actual.x + paso.dx;
-      const y = actual.y + paso.dy;
-      const k = clave(x, y);
-      if (vistos.has(k) || !transitable(x, y)) continue;
-      const llega = esDestino(x, y);
-      if (!llega && ocupada(x, y)) continue;
-      vistos.add(k);
-      const inicial = actual === desde ? paso : primero.get(clave(actual.x, actual.y))!;
-      if (llega) return inicial;
-      primero.set(k, inicial);
-      cola.push({ x, y });
-    }
-  }
-  return null;
+  const camino = findPath(map, desde, hasta, { ocupada, pisable });
+  if (!camino || camino.length === 0) return null;
+  return { dx: camino[0].x - desde.x, dy: camino[0].y - desde.y };
 }
 
 /**

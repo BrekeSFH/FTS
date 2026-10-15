@@ -99,11 +99,25 @@ export interface RenderOptions {
    * qué celda ordenarlo. Sin esto se lo dibuja quieto en su celda.
    */
   position?: ((player: LobbyPlayer, sessionId: string) => PlayerPosition | null) | null;
+  /** Lo que marca el puntero: el camino hasta donde apunta y qué cuesta. */
+  hover?: Hover | null;
   /**
    * Una cámara de tamaño fijo, como la pantalla del juego. Sin esto el canvas
    * toma el tamaño del mapa entero y se ve todo de una vez.
    */
   viewport?: Viewport | null;
+}
+
+/** El camino que marca el puntero antes de hacer click. */
+export interface Hover {
+  /** Las celdas del camino, sin la de partida. */
+  path: readonly Point[];
+  /** La celda bajo el puntero. */
+  target: Point;
+  /** Qué cuesta, para escribirlo sobre la celda. Vacío en el lobby. */
+  label: string;
+  /** `false` si no alcanza la acción: se marca en rojo. */
+  reachable: boolean;
 }
 
 /** Dónde va un jugador: posición en la grilla y celda en la que se lo ordena. */
@@ -342,6 +356,7 @@ export function renderLobby(
     vision = null,
     viewport = null,
     position = null,
+    hover = null,
   }: RenderOptions,
 ): Origin | null {
   const context = canvas.getContext('2d');
@@ -396,6 +411,9 @@ export function renderLobby(
   const salidas = new Map<string, ExitPoint>();
   for (const exit of Array.from(state.exits ?? [])) salidas.set(`${exit.x},${exit.y}`, exit);
 
+  const marcadas = new Set((hover?.path ?? []).map((p) => `${p.x},${p.y}`));
+  const colorCamino = hover?.reachable === false ? 'rgba(220, 70, 60, 0.35)' : 'rgba(110, 200, 255, 0.28)';
+
   for (const cell of drawOrder(state.width, state.height) ) {
     const visible = !vision || vision.visible(cell.x, cell.y);
     // De lo que nunca se vio no se dibuja nada, ni el rombo de alambre: el
@@ -414,6 +432,11 @@ export function renderLobby(
       } else {
         const { x, y } = gridToScreen(cell.x, cell.y);
         strokeDiamond(context, x, y);
+      }
+      // El camino va sobre el piso y debajo de todo lo demás.
+      if (marcadas.has(`${cell.x},${cell.y}`)) fillDiamond(context, cell.x, cell.y, colorCamino);
+      if (hover && hover.target.x === cell.x && hover.target.y === cell.y) {
+        outlineDiamond(context, cell.x, cell.y, hover.reachable ? '#9fdcff' : '#ff7a6b');
       }
       const escalera = escaleraEn(state, cell.x, cell.y);
       if (escalera) drawStairs(context, cell.x, cell.y, escalera);
@@ -451,7 +474,38 @@ export function renderLobby(
       drawPlayer(context, player, pos, sessionId === ownSessionId, character ? character(player, sessionId) : null);
     }
   }
+
+  // El costo va arriba de todo, para que ningún personaje o pared lo tape.
+  if (hover?.label) drawHoverLabel(context, hover);
   return origen;
+}
+
+/** El borde de una celda, para marcar adónde apunta el mouse. */
+function outlineDiamond(context: CanvasRenderingContext2D, gx: number, gy: number, color: string): void {
+  const { x, y } = gridToScreen(gx, gy);
+  context.beginPath();
+  context.moveTo(x + HALF_WIDTH, y);
+  context.lineTo(x + HALF_WIDTH * 2, y + HALF_HEIGHT);
+  context.lineTo(x + HALF_WIDTH, y + HALF_HEIGHT * 2);
+  context.lineTo(x, y + HALF_HEIGHT);
+  context.closePath();
+  context.strokeStyle = color;
+  context.lineWidth = 2;
+  context.stroke();
+}
+
+/** Lo que cuesta ir adonde apunta el mouse, sobre la celda. */
+function drawHoverLabel(context: CanvasRenderingContext2D, hover: Hover): void {
+  const { x, y } = cellCenter(hover.target.x, hover.target.y);
+  context.font = 'bold 12px system-ui, sans-serif';
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  const ancho = context.measureText(hover.label).width + 10;
+  context.fillStyle = 'rgba(0, 0, 0, 0.7)';
+  context.fillRect(x - ancho / 2, y - 26, ancho, 16);
+  context.fillStyle = hover.reachable ? '#ffffff' : '#ff9a8a';
+  context.fillText(hover.label, x, y - 18);
+  context.textBaseline = 'alphabetic';
 }
 
 /**

@@ -342,6 +342,14 @@ export function sendStep(room: LobbyRoom, step: Step): void {
   room.send('move', step);
 }
 
+/**
+ * Camina hasta una celda: el servidor arma el camino y lo da de a un paso.
+ * Con `then: 'loot'` se frena al lado y abre el contenedor que hay ahí.
+ */
+export function sendMoveTo(room: LobbyRoom, x: number, y: number, then?: 'loot'): void {
+  room.send('moveTo', then ? { x, y, then } : { x, y });
+}
+
 /** Dispara a otro jugador. Solo lo escucha la Vault. */
 export function sendAttack(room: LobbyRoom, target: string): void {
   room.send('attack', { target });

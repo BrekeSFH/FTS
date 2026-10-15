@@ -33,6 +33,7 @@ import {
   sendUse,
   sendLoot,
   sendLogout,
+  sendMoveTo,
   sendSell,
   sendStep,
   sendTradeAnswer,
@@ -50,7 +51,9 @@ import { playerToken } from './identity';
 import { loadoutFrom, stashRows, valueOfItems, type StashContents } from './stash';
 import { ACTION_LABEL, formatKg, inventoryRows, loadSummary, weightOfItems, type InventoryAction } from './inventory';
 import { playerAt, toWorld, type Origin } from './pointer';
-import { cellCenter } from '../iso/projection';
+import { cellCenter, screenToGrid, type Point } from '../iso/projection';
+import { previewPath } from './path';
+import type { Hover } from './render';
 import { PASO_MS, createMotion } from './motion';
 import { turnHud } from './hud';
 import { renderLobby, type PlacedTile, type WallSet } from './render';
@@ -60,6 +63,9 @@ import { renderLobby, type PlacedTile, type WallSet } from './render';
  * En otro monitor se escala sin deformarse.
  */
 export const PANTALLA = { width: 1920, height: 1080 } as const;
+
+/** Lo que cuesta abrir un contenedor, para sumarlo al camino. Lo cobra el servidor. */
+const AP_SAQUEO = 2;
 
 /** Los escalones de zoom de la rueda, y con cuál se arranca. */
 export const ZOOMS: readonly number[] = [1, 1.5, 2, 2.5, 3];
@@ -303,6 +309,58 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     }, 5000);
   };
 
+  /** Dónde está el mouse sobre el canvas, en píxeles de la pantalla. */
+  let mouse: { x: number; y: number } | null = null;
+
+  /**
+   * Qué haría un click donde está el mouse: disparar a alguien, abrir un
+   * contenedor o caminar hasta una celda. Es lo mismo para marcar el camino
+   * que para hacer el click, así lo que se ve es lo que pasa.
+   */
+  type Intencion =
+    | { tipo: 'disparar'; blanco: string }
+    | { tipo: 'saquear'; celda: Point; camino: Point[] | null }
+    | { tipo: 'caminar'; celda: Point; camino: Point[] | null };
+
+  const intencion = (): Intencion | null => {
+    if (!room?.state?.players || !origen || !mouse) return null;
+    const vista = floorView(room.state, room.sessionId, mapas);
+    const punto = toWorld(mouse.x, mouse.y, ui.canvas, origen);
+    const blanco = playerAt(vista, punto, room.sessionId);
+    // En el lobby no se dispara: hacer click en alguien es ir hasta él.
+    if (blanco && salaPorTurnos()) return { tipo: 'disparar', blanco: blanco.sessionId };
+    const celda = screenToGrid(punto.x, punto.y);
+    const yo = room.state.players.get(room.sessionId);
+    if (!yo || !vista.cells) return null;
+    const ocupada = (x: number, y: number) => {
+      let hay = false;
+      vista.players.forEach((p) => (hay ||= p.x === x && p.y === y));
+      return hay;
+    };
+    const cofre = Array.from(vista.caches ?? []).some((c) => !c.looted && c.x === celda.x && c.y === celda.y);
+    const alLado = cofre || ocupada(celda.x, celda.y);
+    const camino = previewPath(
+      { width: vista.width, height: vista.height, cells: vista.cells },
+      yo,
+      celda,
+      ocupada,
+      alLado,
+    );
+    return { tipo: cofre ? 'saquear' : 'caminar', celda, camino };
+  };
+
+  /** Lo que se marca bajo el mouse, con lo que costaría en la Vault. */
+  const marcaDelMouse = (): Hover | null => {
+    const i = intencion();
+    if (!i || i.tipo === 'disparar' || !i.camino) return null;
+    const yo = room?.state?.players?.get(room.sessionId);
+    if (!salaPorTurnos() || !yo) return { path: i.camino, target: i.celda, label: '', reachable: true };
+    const costo = i.camino.length + (i.tipo === 'saquear' ? AP_SAQUEO : 0);
+    const ap = yo.active ? (yo.ap ?? 0) : 0;
+    const label = i.tipo === 'saquear' ? `Abrir · ${costo} PA` : `${costo} PA`;
+    return { path: i.camino, target: i.celda, label, reachable: costo <= ap };
+  };
+
   /** A quiénes se está animando, para olvidar a los que se van. */
   let idsAnimados = new Set<string>();
 
@@ -330,6 +388,7 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
       // En pantalla completa, la pantalla del juego: 1920×1080 a tamaño
       // original, siguiendo al personaje propio.
       position: (_, id) => movimiento.position(id, ahora),
+      hover: marcaDelMouse(),
       // Una cámara como la del juego, siguiendo al personaje propio a mitad
       // de cada paso. En pantalla completa ocupa 1920×1080; el canvas dibuja
       // menos píxeles según el zoom, y se agranda sin suavizar.
@@ -632,14 +691,29 @@ export function setupLobby(ui: LobbyElements): LobbyHandle {
     sendStep(room, step);
   });
 
-  // Click sobre otro jugador: dispararle. El servidor decide si se puede;
-  // acá solo se evita mandar lo que seguro no corresponde.
+  // Se juega con el mouse, como en el juego: click en una celda para ir,
+  // en un contenedor para abrirlo y en alguien para dispararle. El servidor
+  // decide si se puede; acá solo se evita mandar lo que seguro no corresponde.
   ui.canvas.addEventListener('click', (event) => {
-    if (!room?.state?.players || !origen) return;
+    mouse = { x: event.offsetX, y: event.offsetY };
+    if (!room?.state?.players) return;
     if (!turnHud(room.state, room.state.players.get(room.sessionId)).canMove) return;
-    const punto = toWorld(event.offsetX, event.offsetY, ui.canvas, origen);
-    const blanco = playerAt(floorView(room.state, room.sessionId, mapas), punto, room.sessionId);
-    if (blanco) sendAttack(room, blanco.sessionId);
+    const i = intencion();
+    if (!i) return;
+    if (i.tipo === 'disparar') sendAttack(room, i.blanco);
+    else sendMoveTo(room, i.celda.x, i.celda.y, i.tipo === 'saquear' ? 'loot' : undefined);
+  });
+
+  // El cursor dice qué haría el click: mira para disparar, mano para abrir.
+  ui.canvas.addEventListener('mousemove', (event) => {
+    mouse = { x: event.offsetX, y: event.offsetY };
+    const i = intencion();
+    ui.canvas.style.cursor = i?.tipo === 'disparar' ? 'crosshair' : i?.tipo === 'saquear' ? 'pointer' : 'default';
+    draw();
+  });
+  ui.canvas.addEventListener('mouseleave', () => {
+    mouse = null;
+    draw();
   });
 
   // Un solo handler para toda la lista: los botones se rehacen seguido.

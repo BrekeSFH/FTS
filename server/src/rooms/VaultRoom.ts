@@ -52,6 +52,7 @@ import {
   type CombatantType,
   type VaultStateType,
 } from './vaultState';
+import { PASO_RUTA_MS, findPath } from './path';
 import { SIGHT_RADIUS, canSee, isVisible, visibleMask } from './vision';
 
 type VaultRoomOptions = { state: VaultStateType };
@@ -201,6 +202,30 @@ export interface MoveMessage {
   dy: number;
 }
 
+/** Ir caminando hasta una celda, con un click. */
+export interface MoveToMessage {
+  x?: unknown;
+  y?: unknown;
+  /** Qué hacer al llegar al lado: abrir el contenedor que hay ahí. */
+  then?: unknown;
+}
+
+/** Qué se puede hacer al final de una ruta. */
+type AlLlegar = 'loot' | null;
+
+/** Una ruta en curso: lo que falta caminar y qué hacer al llegar. */
+interface Ruta {
+  pasos: Cell[];
+  destino: Cell;
+  alLlegar: AlLlegar;
+  /**
+   * A quiénes de otro bando se veía al salir. Si aparece alguien más, se
+   * frena: seguir caminando hacia un enemigo que acaba de asomar es lo que un
+   * jugador nunca querría que pase solo.
+   */
+  vistos: Set<string>;
+}
+
 export interface JoinOptions {
   name?: unknown;
   party?: unknown;
@@ -308,6 +333,9 @@ export class VaultRoom extends Room<VaultRoomOptions> {
   /** Qué celdas exploró cada jugador, un arreglo por piso. */
   private explorado = new Map<string, Uint8Array[]>();
 
+  /** La ruta que va caminando cada jugador, si hizo click en algún lado. */
+  private rutas = new Map<string, Ruta>();
+
   /** Para no volver a entrar a los turnos de la IA desde adentro de ellos. */
   private jugandoIA = false;
 
@@ -364,50 +392,63 @@ export class VaultRoom extends Room<VaultRoomOptions> {
       }
     }
 
-    this.onMessage('move', (client, message: MoveMessage) => {
-      if (this.tryMove(client.sessionId, message)) {
-        const salida = this.extractIfOnExit(client.sessionId);
-        if (salida !== null) {
-          client.send(EXTRACTED_MESSAGE, salida satisfies ExtractedMessage);
-          client.leave();
-        } else {
-          this.sendVision(client);
-        }
-      }
+    // Cualquier otra orden corta la ruta que se venía caminando: es lo que se
+    // espera al apretar una tecla o hacer click en otra cosa a mitad de camino.
+    const cortando = <T>(fn: (client: Client, message: T) => void) => (client: Client, message: T) => {
+      this.rutas.delete(client.sessionId);
+      fn(client, message);
+    };
+
+    this.onMessage(
+      'move',
+      cortando((client, message: MoveMessage) => {
+        if (this.tryMove(client.sessionId, message)) this.afterMove(client.sessionId);
+        this.publish();
+      }),
+    );
+
+    this.onMessage('moveTo', (client, message: MoveToMessage) => {
+      this.planRoute(client.sessionId, message);
       this.publish();
     });
 
-    this.onMessage('attack', (client, message: AttackMessage) => {
+    this.onMessage('attack', cortando((client, message: AttackMessage) => {
       const target = typeof message?.target === 'string' ? message.target : '';
       const resultado = this.tryAttack(client.sessionId, target);
       if (resultado) this.announceShot(resultado);
       this.publish();
-    });
+    }));
 
-    this.onMessage('equip', (client, message: ItemMessage) => {
+    this.onMessage('equip', cortando((client, message: ItemMessage) => {
       this.tryEquip(client.sessionId, typeof message?.item === 'string' ? message.item : '');
       this.publish();
-    });
+    }));
 
-    this.onMessage('use', (client, message: ItemMessage) => {
+    this.onMessage('use', cortando((client, message: ItemMessage) => {
       this.tryUse(client.sessionId, typeof message?.item === 'string' ? message.item : '');
       this.publish();
-    });
+    }));
 
-    this.onMessage('loot', (client) => {
+    this.onMessage('loot', cortando((client) => {
       this.tryLoot(client.sessionId);
       this.publish();
-    });
+    }));
 
-    this.onMessage('drop', (client, message: ItemMessage) => {
+    this.onMessage('drop', cortando((client, message: ItemMessage) => {
       this.tryDrop(client.sessionId, typeof message?.item === 'string' ? message.item : '');
       this.publish();
-    });
+    }));
 
-    this.onMessage('endTurn', (client) => {
+    this.onMessage('endTurn', cortando((client) => {
       this.endTurn(client.sessionId);
       this.publish();
-    });
+    }));
+
+    // Las rutas se caminan de a un paso, a la misma cadencia con la que el
+    // cliente dibuja cada paso: así la caminata se ve continua.
+    this.clock.setInterval(() => {
+      if (this.rutas.size > 0 && this.avanzarRutas()) this.publish();
+    }, PASO_RUTA_MS);
 
     this.onMessage(VISION_MESSAGE, (client) => this.sendVision(client));
     // Se manda al entrar, pero como con la visión, el cliente puede no estar
@@ -498,6 +539,7 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     // Irse sin extraer pierde todo, como pide el punto 4: lo que llevaba ya
     // había salido del alijo.
     this.duenos.delete(client.sessionId);
+    this.rutas.delete(client.sessionId);
     this.mascaras.delete(client.sessionId);
     this.explorado.delete(client.sessionId);
     this.state.players.delete(client.sessionId);
@@ -595,6 +637,7 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     if (!esEnemigo(sessionId)) this.fallen.push({ name, party, loot, items });
     this.botinPerdido.set(sessionId, loot);
     this.rastro.delete(sessionId);
+    this.rutas.delete(sessionId);
     this.dejarEnElPiso(floor, x, y, items);
     this.state.players.delete(sessionId);
     if (this.turns) this.turns = leave(this.turns, sessionId, Date.now());
@@ -1071,6 +1114,117 @@ export class VaultRoom extends Room<VaultRoomOptions> {
     }
     this.caches.push({ floor, x, y, items: [...items] });
     this.state.caches.push(new LootCache({ floor, x, y, looted: false }));
+  }
+
+  /**
+   * Lo que pasa después de cada paso de un jugador: si cayó en una salida,
+   * sale; si no, se le manda lo que ve ahora.
+   */
+  private afterMove(sessionId: string): void {
+    const client = this.clients.getById(sessionId);
+    if (!client) return;
+    const salida = this.extractIfOnExit(sessionId);
+    if (salida !== null) {
+      this.rutas.delete(sessionId);
+      client.send(EXTRACTED_MESSAGE, salida satisfies ExtractedMessage);
+      client.leave();
+      return;
+    }
+    this.sendVision(client);
+  }
+
+  /** Los de otro bando que alguien ve en este momento. */
+  private hostilesALaVista(sessionId: string): Set<string> {
+    const yo = this.state.players.get(sessionId);
+    const out = new Set<string>();
+    if (!yo) return out;
+    const map = this.mapOf(yo.floor);
+    for (const [id, c] of this.state.players) {
+      if (id !== sessionId && c.party !== yo.party && canShoot(map, yo, c, SIGHT_RADIUS)) out.add(id);
+    }
+    return out;
+  }
+
+  /**
+   * Arma la ruta hasta la celda en la que se hizo click y da el primer paso
+   * enseguida, para que el click se sienta. Con `then: 'loot'` alcanza con
+   * llegar al lado, y al llegar se abre el contenedor.
+   */
+  planRoute(sessionId: string, message: MoveToMessage | undefined): boolean {
+    this.rutas.delete(sessionId);
+    const c = this.state.players.get(sessionId);
+    const x = message?.x;
+    const y = message?.y;
+    if (!c || !Number.isInteger(x) || !Number.isInteger(y)) return false;
+    const destino = { x: x as number, y: y as number };
+    const alLlegar: AlLlegar = message?.then === 'loot' ? 'loot' : null;
+    if (!this.activos().has(sessionId)) {
+      this.avisar(sessionId, 'Todavía no es tu turno.');
+      return false;
+    }
+
+    const map = this.mapOf(c.floor);
+    const camino = findPath(map, c, destino, {
+      ocupada: (cx, cy) => this.isOccupied(c.floor, cx, cy),
+      alLado: alLlegar !== null || this.isOccupied(c.floor, destino.x, destino.y),
+      max: AP_POR_TURNO * 4,
+    });
+    if (!camino) {
+      this.avisar(sessionId, 'No hay forma de llegar ahí.');
+      return false;
+    }
+    this.rutas.set(sessionId, { pasos: camino, destino, alLlegar, vistos: this.hostilesALaVista(sessionId) });
+    this.avanzarRuta(sessionId);
+    return true;
+  }
+
+  /** Da un paso de cada ruta en curso. Devuelve si alguno se movió. */
+  avanzarRutas(): boolean {
+    let alguno = false;
+    for (const id of [...this.rutas.keys()]) alguno = this.avanzarRuta(id) || alguno;
+    return alguno;
+  }
+
+  /**
+   * Un paso de la ruta de alguien. La ruta se termina al llegar, al quedarse
+   * sin acción o turno, si algo se cruzó en el camino o si aparece a la vista
+   * alguien de otro bando.
+   */
+  private avanzarRuta(sessionId: string): boolean {
+    const ruta = this.rutas.get(sessionId);
+    const c = this.state.players.get(sessionId);
+    if (!ruta || !c) {
+      this.rutas.delete(sessionId);
+      return false;
+    }
+    const siguiente = ruta.pasos.shift();
+    if (!siguiente) {
+      this.terminarRuta(sessionId, ruta);
+      return false;
+    }
+    const paso = { dx: siguiente.x - c.x, dy: siguiente.y - c.y };
+    if (!this.tryMove(sessionId, paso)) {
+      this.rutas.delete(sessionId);
+      if (c.ap === 0 || !this.activos().has(sessionId)) this.avisar(sessionId, 'Te quedaste sin puntos de acción.');
+      return false;
+    }
+    this.afterMove(sessionId);
+    if (!this.rutas.has(sessionId)) return true;
+
+    const ahora = this.hostilesALaVista(sessionId);
+    const nuevo = [...ahora].find((id) => !ruta.vistos.has(id));
+    if (nuevo) {
+      this.rutas.delete(sessionId);
+      this.avisar(sessionId, `Ves a ${this.state.players.get(nuevo)?.name ?? 'alguien'}: te frenás.`);
+      return true;
+    }
+    if (ruta.pasos.length === 0) this.terminarRuta(sessionId, ruta);
+    return true;
+  }
+
+  private terminarRuta(sessionId: string, ruta: Ruta): void {
+    this.rutas.delete(sessionId);
+    if (ruta.alLlegar === 'loot') this.tryLoot(sessionId);
   }
 
   /** Cierra el turno de alguien, si es suyo para cerrar. */

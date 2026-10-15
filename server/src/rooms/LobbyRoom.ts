@@ -15,7 +15,8 @@ import { currentStash, playerIdFromToken, type AccountError, type StashContents 
 import { DEFAULT_FACING, facingFromStep } from './direction';
 import { ITEMS_PAYLOAD, itemById } from './items';
 import { STOCK, countsOf, sanitizeCounts, sanitizeCredits, sellPrice, stockEntry, type ShopMessage } from './market';
-import { floorCells, generateMap, isBlocked, randomSeed, type GeneratedMap } from './map';
+import { floorCells, generateMap, isBlocked, randomSeed, type Cell, type GeneratedMap } from './map';
+import { PASO_RUTA_MS, findPath } from './path';
 import { LobbyState, MapSchema, Player, type LobbyStateType } from './state';
 import { SIGHT_RADIUS, visibleMask } from './vision';
 
@@ -185,10 +186,18 @@ export class LobbyRoom extends Room<LobbyRoomOptions> {
     });
 
     this.onMessage('move', (client, message: MoveMessage) => {
+      this.rutas.delete(client.sessionId);
       // Solo si se movió: girar en el lugar no cambia lo que se ve, porque la
       // vista es circular y no un cono. El día que sea un cono, esto cambia.
       if (this.tryMove(client.sessionId, message)) this.sendVision(client);
     });
+
+    // Con un click se camina hasta la celda, de a un paso, a la misma cadencia
+    // que en la Vault. Acá no hay turnos ni acción que gastar.
+    this.onMessage('moveTo', (client, message: { x?: unknown; y?: unknown }) => this.planRoute(client, message));
+    this.clock.setInterval(() => {
+      for (const id of [...this.rutas.keys()]) this.avanzarRuta(id);
+    }, PASO_RUTA_MS);
 
     // El cliente también puede pedirla. El empujón de `onJoin` sale mientras
     // el cliente todavía está terminando de engancharse, así que quien no lo
@@ -216,6 +225,37 @@ export class LobbyRoom extends Room<LobbyRoomOptions> {
       this.account(client, 'login', message?.name, message?.password),
     );
     this.onMessage('logout', (client) => this.logout(client));
+  }
+
+  /** Lo que le falta caminar a cada uno de la ruta que pidió con un click. */
+  private rutas = new Map<string, Cell[]>();
+
+  planRoute(client: Client, message: { x?: unknown; y?: unknown } | undefined): boolean {
+    this.rutas.delete(client.sessionId);
+    const yo = this.state.players.get(client.sessionId);
+    const { x, y } = message ?? {};
+    if (!yo || !Number.isInteger(x) || !Number.isInteger(y)) return false;
+    const destino = { x: x as number, y: y as number };
+    const camino = findPath(this.map, yo, destino, {
+      ocupada: (cx, cy) => this.isOccupied(cx, cy),
+      alLado: this.isOccupied(destino.x, destino.y),
+    });
+    if (!camino || camino.length === 0) return false;
+    this.rutas.set(client.sessionId, camino);
+    this.avanzarRuta(client.sessionId);
+    return true;
+  }
+
+  private avanzarRuta(sessionId: string): void {
+    const yo = this.state.players.get(sessionId);
+    const siguiente = this.rutas.get(sessionId)?.shift();
+    if (!yo || !siguiente || !this.tryMove(sessionId, { dx: siguiente.x - yo.x, dy: siguiente.y - yo.y })) {
+      this.rutas.delete(sessionId);
+      return;
+    }
+    const client = this.clients.getById(sessionId);
+    if (client) this.sendVision(client);
+    if (this.rutas.get(sessionId)?.length === 0) this.rutas.delete(sessionId);
   }
 
   /** De qué jugador es cada sesión, para leerle el alijo. */
@@ -468,6 +508,7 @@ export class LobbyRoom extends Room<LobbyRoomOptions> {
       if (oferta.to === client.sessionId) this.cancelOffer(oferta.from, 'Se fue a quien se la hiciste.');
     }
     this.state.players.delete(client.sessionId);
+    this.rutas.delete(client.sessionId);
     this.duenos.delete(client.sessionId);
     this.tokens.delete(client.sessionId);
     this.intentos.delete(client.sessionId);
